@@ -3,12 +3,8 @@ library(tidygeocoder)
 library(readr)
 library(stringr)
 library(lubridate)
-library(sf)
-library(mapview)
 library(here)
-library(Hmisc)
 library(scales)
-library(hms)
 options(scipen=999) # force full notation not scientific
 
 start_time <- Sys.time()  # Capture start time
@@ -52,7 +48,7 @@ geoprocess_data <- function(raw_df, geo_df, geolocated_data_path) {
   
   # Geocode the records to process
   geo_processed <- records_to_process %>%
-    sample_n(500, replace = FALSE) %>%  # Throttle for testing
+    sample_n(5000, replace = FALSE) %>%  # Throttle for testing
     tidygeocoder::geocode(
       street = "100_block_addr",
       postalcode = "zip",
@@ -72,14 +68,12 @@ geoprocess_data <- function(raw_df, geo_df, geolocated_data_path) {
   write_csv(geo_processed, geolocated_data_path, append = T)
   
   end_time <- Sys.time()  # Capture end time
-  duration <- end_time - start_time  # Calculate duration
-  total_sec <- as.numeric(duration)
-  hours <- total_sec %/% 3600
-  minutes <- (total_sec %% 3600) %/% 60
-  seconds <- total_sec %% 60
+  duration_sec <- as.numeric(end_time - start_time, units = "secs")  # Calculate duration
+  hours <- duration_sec %/% 3600
+  minutes <- (duration_sec %% 3600) %/% 60
+  seconds <- duration_sec %% 60
   formatted_duration <- sprintf("%02d:%02d:%02d", hours, minutes, round(seconds))
-  cat("Processing took:", formatted_duration, "h/m/s\n")
-  
+  cat("Time elapsed:", formatted_duration, "h/m/s\n")
   }
 
 geoprocess_data(raw_df, geo_df, geolocated_data_path)

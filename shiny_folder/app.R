@@ -2,6 +2,7 @@ library(shiny)
 library(bslib)
 library(readr)
 library(dplyr)
+library(lubridate)
 library(sf)
 library(leaflet)
 library(ggplot2)
@@ -26,7 +27,7 @@ ui <- fluidPage(
     sidebarLayout(
         sidebarPanel(
             selectInput("yearSelect", "Select Year", 
-                        choices = c("All", as.character(2018:2023)), selected = "All", multiple = T),
+                        choices = c("All", as.character(2018:2024)), selected = "All", multiple = T),
             sliderInput("dateRange", "Date",
                         min = min(geo_df$date, na.rm = TRUE), 
                         max = max(geo_df$date, na.rm = TRUE),
@@ -82,8 +83,8 @@ server <- function(input, output, session) {
                 addCircleMarkers(~long, ~lat, 
                                  color = "#333333", # Dark gray color
                                  fillColor = "#333333", # Dark gray fill
-                                 fillOpacity = 0.7, 
-                                 opacity = 1, 
+                                 fillOpacity = 0.2, 
+                                 opacity = .2, 
                                  weight = 1,
                                  popup = ~paste(ucr_crime_category, format(date, "%Y-%m-%d"), sep = "<br>"))
         }
@@ -97,17 +98,37 @@ server <- function(input, output, session) {
             summarise(crime_count = n(), .groups = 'drop') %>%
             arrange(month)
         
-        # Plot with updated axis labels and formats
+        date_range <- range(monthly_crime_data$month)
+        start_year <- year(min(date_range))
+        end_year <- year(max(date_range))
+        years_spanned <- as.numeric(difftime(max(date_range), min(date_range), units = "days")) / 365.25
+        
+        # Decide date_breaks and date_labels based on the number of years spanned
+        if(years_spanned <= 3) {
+            date_breaks <- "1 month"
+            date_labels <- "%b %Y"
+        } else {
+            date_breaks <- "6 months"
+            date_labels <- "%b %Y"
+        }
+        
+        year_starts <- seq(as.Date(paste0(start_year, "-01-01")), 
+                           as.Date(paste0(end_year, "-01-01")), 
+                           by = "1 year")
+        
         ggplot(monthly_crime_data, aes(x = month, y = crime_count, group = 1)) +
             geom_line() +
             geom_point() +
-            scale_x_date(date_labels = "%b %Y", date_breaks = "1 month") + # Format X axis labels
+            scale_x_date(date_breaks = date_breaks, date_labels = date_labels) +
+            geom_vline(xintercept = as.numeric(year_starts), 
+                       linetype = "dashed", 
+                       color = "grey") +
             theme_minimal() +
             xlab("Month") +
             ylab("Number of Crimes") +
-            theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 12), # Adjust X axis label size and rotation
-                  axis.text.y = element_text(size = 12), # Adjust Y axis label size
-                  axis.title = element_text(size = 14)) # Adjust title size for both axes
+            theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+                  axis.text.y = element_text(size = 12),
+                  axis.title = element_text(size = 14))
     })
 }
 
