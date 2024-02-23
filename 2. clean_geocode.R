@@ -16,11 +16,12 @@ geolocated_data_path <- here::here("data/crime_data_geolocated.csv")
 # Read raw data
 raw_df <- read_csv(raw_data_path) %>%
   rename_with(~ str_to_lower(.) %>% str_replace_all(" ", "_")) %>%
-  mutate(`100_block_addr` = str_replace_all(`100_block_addr`, "XX", "00"),
-         zip = as.character(zip),
-         state = "Arizona",
-         occurred_on = mdy_hm(occurred_on, truncated = 3),
-         occurred_to = mdy_hm(occurred_to, truncated = 3)) %>% 
+  mutate(zip = as.character(zip)) %>% 
+#  mutate(#`100_block_addr` = str_replace_all(`100_block_addr`, "XX", "00"),
+#         zip = as.character(zip),
+#         state = "Arizona",
+#         occurred_on = mdy_hm(occurred_on, truncated = 3),
+#         occurred_to = mdy_hm(occurred_to, truncated = 3)) %>% 
   filter(!is.na(occurred_on))
 
 # Read geolocated data
@@ -48,7 +49,9 @@ geoprocess_data <- function(raw_df, geo_df, geolocated_data_path) {
   
   # Geocode the records to process
   geo_processed <- records_to_process %>%
-    sample_n(5000, replace = FALSE) %>%  # Throttle for testing
+    sample_n(40, replace = FALSE) %>%  # Throttle for testing
+    mutate(dummy = print(n())) %>% # for troubleshooting
+    select(-dummy) %>%  # Drop the dummy column
     tidygeocoder::geocode(
       street = "100_block_addr",
       postalcode = "zip",
@@ -77,6 +80,7 @@ geoprocess_data <- function(raw_df, geo_df, geolocated_data_path) {
   }
 
 geoprocess_data(raw_df, geo_df, geolocated_data_path)
+
 
 
 

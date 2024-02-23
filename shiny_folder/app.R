@@ -7,12 +7,19 @@ library(sf)
 library(leaflet)
 library(ggplot2)
 library(here)
+library(plotly)
 
 # Load and preprocess the data
-geolocated_data_path <- here::here("data/crime_data_geolocated.csv")
+geolocated_data_path <- here::here("data/crime_data_geolocated.csv") # nominatim data - not using for now
+raw_data_path <- here::here("data/crime_data_raw.csv")
+census_geolocated_path <- here::here("data/census_geolocated.csv") # census API data
+
+
+# raw_df <- readr::read_csv(raw_data_path) %>% 
+#     mutate(date = as.Date(occurred_on))
 
 # Assuming read_csv is from the readr package and it can handle this file path
-geo_df <- read_csv(geolocated_data_path) %>%
+geo_df <- read_csv(census_geolocated_path) %>%
     mutate(zip = as.character(zip), 
            date = as.Date(occurred_on), # Correct column name for date
            ucr_crime_category = as.character(ucr_crime_category),
@@ -27,7 +34,7 @@ ui <- fluidPage(
     sidebarLayout(
         sidebarPanel(
             selectInput("yearSelect", "Select Year", 
-                        choices = c("All", as.character(2018:2024)), selected = "All", multiple = T),
+                        choices = c("All", as.character(2015:2023)), selected = "All", multiple = T),
             sliderInput("dateRange", "Date",
                         min = min(geo_df$date, na.rm = TRUE), 
                         max = max(geo_df$date, na.rm = TRUE),
@@ -36,15 +43,16 @@ ui <- fluidPage(
                         step = 1, 
                         dragRange = TRUE),
             selectInput("crimeType", "Crime",
-                        choices = unique(geo_df$ucr_crime_category), 
-                        multiple = TRUE,
-                        selected = unique(geo_df$ucr_crime_category)),
+                        choices = c("All", unique(geo_df$ucr_crime_category)), selected = "All", multiple = T),
+            sliderInput("topAddresses", "Top addresses to display", 
+                         value = 1, min = 0, max = 50, step = 1),
+            checkboxInput("enableTopAddresses", "Enable Top Addresses Filter", value = FALSE),
             actionButton("update", "Update"),
             width = 3 # Set sidebar width to 3 columns
         ),
         mainPanel(
             leafletOutput("map"),
-            plotOutput("crimeGraph"), # Add a plot output for the crime graph
+            plotlyOutput("crimeGraph"), # Add a plot output for the crime graph
             width = 9 # Set main panel width to 9 columns
         )
     )
@@ -54,9 +62,24 @@ ui <- fluidPage(
 server <- function(input, output, session) {
     # Create a reactive expression that updates only when the update button is clicked
     filteredData <- eventReactive(input$update, {
-        geo_df %>%
+        data <- geo_df %>%
             filter(date >= input$dateRange[1] & date <= input$dateRange[2],
                    ucr_crime_category %in% input$crimeType)
+        
+        if (input$enableTopAddresses) {
+            # Aggregate data to count incidents per address
+            address_counts <- data %>%
+                group_by(`100_block_addr`) %>%
+                summarise(incidents = n(), .groups = 'drop') %>%
+                arrange(desc(incidents)) %>%
+                head(input$topAddresses) # Keep only top N addresses
+            
+            # Filter the main dataset to include only the top N addresses
+            data <- data %>%
+                semi_join(address_counts, by = "100_block_addr")
+        }
+        
+        data
     })
     
     # Automatically update the date slider when year selections change
@@ -71,6 +94,21 @@ server <- function(input, output, session) {
             startDate <- min(as.Date(paste0(years, "-01-01")))
             endDate <- max(as.Date(paste0(years, "-12-31")))
             updateSliderInput(session, "dateRange", value = c(startDate, endDate))
+        }
+    })
+    
+    observeEvent(input$crimeType, {
+        # If "All" is selected, select all options
+        if ("All" %in% input$crimeType) {
+            # Check if "All" is the only option selected or if it was selected last
+            if (length(input$crimeType) == 1 || tail(input$crimeType, n = 1) == "All") {
+                updateSelectInput(session, "crimeType", 
+                                  selected = c("All", unique(geo_df$ucr_crime_category)))
+            } else {
+                # If "All" is selected along with other options but not last, deselect "All"
+                updateSelectInput(session, "crimeType", 
+                                  selected = setdiff(input$crimeType, "All"))
+            }
         }
     })
     
@@ -90,7 +128,7 @@ server <- function(input, output, session) {
         }
     })
     
-    output$crimeGraph <- renderPlot({
+    output$crimeGraph <- renderPlotly({
         # Aggregate filtered data by month
         monthly_crime_data <- filteredData() %>%
             mutate(month = as.Date(format(date, "%Y-%m-01"))) %>% # Ensure 'month' is Date type for scale_x_date
@@ -116,11 +154,15 @@ server <- function(input, output, session) {
                            as.Date(paste0(end_year, "-01-01")), 
                            by = "1 year")
         
-        ggplot(monthly_crime_data, aes(x = month, y = crime_count, group = 1)) +
+        # Create the ggplot object as before
+        p <- ggplot(monthly_crime_data, aes(x = month, y = crime_count)) +
             geom_line() +
             geom_point() +
-            scale_x_date(date_breaks = date_breaks, date_labels = date_labels) +
-            geom_vline(xintercept = as.numeric(year_starts), 
+            scale_x_date(date_breaks = ifelse((max(monthly_crime_data$month) - min(monthly_crime_data$month)) / 365.25 <= 3, "1 month", "6 months"),
+                         date_labels = "%b %Y") +
+            geom_vline(xintercept = as.numeric(seq(as.Date(paste0(year(min(monthly_crime_data$month)), "-01-01")), 
+                                                   as.Date(paste0(year(max(monthly_crime_data$month)), "-01-01")), 
+                                                   by = "1 year")), 
                        linetype = "dashed", 
                        color = "grey") +
             theme_minimal() +
@@ -129,7 +171,10 @@ server <- function(input, output, session) {
             theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
                   axis.text.y = element_text(size = 12),
                   axis.title = element_text(size = 14))
-    })
+        
+        # Convert the ggplot object to a Plotly object
+        ggplotly(p)
+})
 }
 
 # Run the app
