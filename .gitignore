@@ -1,6 +1,7 @@
 # User files
 .DS_Store
 data/
+.Rhistory
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
