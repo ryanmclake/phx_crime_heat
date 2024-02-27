@@ -44,22 +44,24 @@ app_sidebar = list(
                 dragRange = TRUE),
     selectInput("crimeType", "Crime",
                 choices = c("All", unique(app_df$ucr_crime_category)), selected = "All", multiple = T),
-    sliderInput("topAddresses", "Top addresses to display", 
-                value = 1, min = 0, max = 50, step = 1),
-    checkboxInput("enableTopAddresses", "Enable Top Addresses Filter", value = FALSE),
+    sliderInput("percentileRange", "Select Percentile Range:",
+                min = 10, max = 100, value = c(10, 100), step = 10,
+                pre = "", post = "th percentile", ticks = TRUE, animate = TRUE),
+#    checkboxInput("enableTopAddresses", "Enable Top Addresses Filter", value = FALSE),
     actionButton("update", "Update"))
 
 ui <- page_navbar(
     theme = bslib::bs_theme(version = 5, bootswatch = "journal"),
     title = "Phoenix Crime App",
-    sidebar = bslib::sidebar(app_sidebar, width = 350), # Define sidebar here for consistency across all pages
+    sidebar = bslib::sidebar(app_sidebar, width = 400), # Define sidebar here for consistency across all pages
     nav_spacer(),
     nav_panel(
         "Map",
         leafletOutput("map")),
     nav_panel(
         "Graphs",
-        plotlyOutput("crimeGraph")
+        plotlyOutput("crimeGraph"),
+        plotlyOutput("dayOfWeekHeatmap") # Add this line for the heatmap
     ),
     nav_panel( # Add this for the heatmap
         "Heatmap",
@@ -76,18 +78,25 @@ server <- function(input, output, session) {
             filter(occurred_on >= input$dateRange[1] & occurred_on <= input$dateRange[2],
                    ucr_crime_category %in% input$crimeType)
         
-        if (input$enableTopAddresses) {
-            # Aggregate data to count incidents per address
-            address_counts <- data %>%
-                group_by(`100_block_addr`) %>%
-                summarise(incidents = n(), .groups = 'drop') %>%
-                arrange(desc(incidents)) %>%
-                head(input$topAddresses) # Keep only top N addresses
+        # Calculate incidents per address
+        address_counts <- data %>%
+            group_by(`100_block_addr`) %>%
+            summarise(incidents = n(), .groups = 'drop')
+        
+        # Calculate percentile ranks for the addresses
+        address_counts <- address_counts %>%
+            mutate(percentile_rank = ntile(incidents, 10)) # Assigns percentile rank from 1 (lowest) to 10 (highest)
+        
+        # Filter data based on selected percentiles from input
+        if (!is.null(input$percentileRange) && 
+            !(length(input$percentileRange) == 1 && input$percentileRange[1] == "All")) {
+            # Convert selected percentiles to numeric, ignoring "All"
+            selected_percentiles_numeric <- as.numeric(input$percentileRange[input$percentileRange != "All"])
             
-            # Filter the main dataset to include only the top N addresses
             data <- data %>%
-                semi_join(address_counts, by = "100_block_addr")
+                semi_join(address_counts %>% filter(percentile_rank %in% selected_percentiles_numeric), by = "100_block_addr")
         }
+        
         data
     })
     
@@ -198,6 +207,33 @@ server <- function(input, output, session) {
                            max = 0.05, 
                            radius = 25)
         }
+    })
+    
+    output$dayOfWeekHeatmap <- renderPlotly({
+        # Prepare the data: extract day of the week and hour of the day
+        data <- filteredData() %>%
+            mutate(dayOfWeek = weekdays(occurred_on),
+                   hourOfDay = as.integer(format(occurred_on, "%H")), # Use %H for 24-hour format
+                   hourLabel = if_else(hourOfDay == 0, "12 AM",
+                                       if_else(hourOfDay < 12, paste(hourOfDay, "AM"), 
+                                               if_else(hourOfDay == 12, "12 PM", paste(hourOfDay - 12, "PM"))))) %>% 
+            group_by(dayOfWeek, hourOfDay) %>%
+            summarise(crimeCount = n(),
+                      hourLabel = first(hourLabel),
+                      .groups = 'drop')
+        
+        # Convert factors to ensure proper order in the plot
+        data$dayOfWeek <- factor(data$dayOfWeek, levels = c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"))
+        # Replace the hourOfDay with hourLabel for plotting
+        data$hourOfDay <- factor(data$hourLabel, levels = c("12 AM", paste(1:11, "AM"), "12 PM", paste(1:11, "PM")), ordered = TRUE)
+        
+        # Create the heatmap
+        p <- plot_ly(data, x = ~dayOfWeek, y = ~hourOfDay, z = ~crimeCount, type = "heatmap", colors = "Reds",
+                     colorbar = list(title = "Count")) %>%
+            layout(xaxis = list(title = "Day of the Week"), 
+                   yaxis = list(title = "Hour of the Day", categoryorder = "array", categoryarray = c("12 AM", paste(1:11, "AM"), "12 PM", paste(1:11, "PM")))
+                   ) 
+        p
     })
 }
 
