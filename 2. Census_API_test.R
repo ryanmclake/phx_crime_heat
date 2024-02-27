@@ -7,12 +7,13 @@ library(stringr)
 library(tidyr)
 library(Hmisc)
 library(lubridate)
+library(here)
 
 start_time <- Sys.time()  # Capture start time
 
 # Paths
 raw_data_path <- here::here("data/crime_data_raw.csv")
-geolocated_data_path <- here::here("data/crime_data_geolocated.csv")
+#geolocated_data_path <- here::here("data/crime_data_geolocated.csv")
 census_forgeolocation_path <- here::here("data/census_forgeolocation.csv")
 census_temp_path <- here::here("data/census_temp.csv")
 census_geolocated_path <- here::here("data/census_geolocated.csv")
@@ -26,8 +27,7 @@ raw_df <- read_csv(raw_data_path) %>%
 # Read geolocated data
 if (file.exists(census_geolocated_path)) {
   geo_df <- read_csv(census_geolocated_path) %>% 
-    mutate(zip = as.character(zip),
-           occurred_on = as.POSIXct(occurred_on, tz = "UTC", format = "%Y-%m-%d %H:%M:%S"))
+    mutate(zip = as.character(zip))
 } else {
   # Initialize colnames and structure from raw data
   geo_df <- read_csv(raw_data_path) %>%
@@ -43,9 +43,9 @@ if (file.exists(census_geolocated_path)) {
 }
 
 # Prepare the data frame as before
-records_to_process <- anti_join(raw_df, geo_df, by = c("occurred_on", "100_block_addr", "zip"))
+records_to_process <- anti_join(raw_df, geo_df, by = c("100_block_addr", "zip"))
 
-records_to_process <- head(records_to_process, 100)
+records_to_process <- head(records_to_process, 1500)
 
 # Add a unique ID and select necessary columns (adjust column names as necessary)
 records_to_process <- records_to_process %>%
@@ -89,26 +89,106 @@ if (response$status_code == 200) {
   cat("Failed to submit batch geocoding request. Status code:", response$status_code, "\n")
 }
 
-#test <- read_csv(census_temp_path)
-test2 <- read_csv(census_temp_path)
+api_response <- read_csv(census_temp_path, col_names = F)
 
+# Sometimes the API spits out the data using 8 columns. Other times, for no apparent reason, it condenses the data
+# into 3 columns. I can't figure out what drives this behavior, so I just wrote code to deal with both scenarios. 
 
-col_names <- c("Unique_ID", "Input_Address", "Match_Status", "Match_Type", "Output_Address", "Coordinates", "tiger_id", "side")
-# Read the CSV file with specified column names
-census_geodf <- read_csv(census_temp_path, col_names = col_names)
-census_geodf <- census_geodf %>%
-  separate(Coordinates, into = c("long", "lat"), sep = ",", convert = TRUE) %>% 
-  separate(Input_Address, into = c("100_block_addr", "city", "state", "zip"), sep = ",", convert = TRUE) %>% 
-  filter(Unique_ID != "Unique ID") %>% 
-  mutate(zip = str_trim(zip, side = "left")) %>% 
-  select(`100_block_addr`, zip, long, lat)
+if (length(api_response) <= 3) {
+  col_names <- c("unique_ID", "input_address", "match_status")
+  api_response <- read_csv(census_temp_path, col_names = col_names)
+  
+  api_response <- api_response %>% 
+    mutate(match_status_type = case_when(
+      grepl("^Match", match_status) ~ "match",
+      grepl("^No_Match", match_status) | grepl("^Tie", match_status) ~ "no_match_or_tie",
+      TRUE ~ "unknown"  # Handles any unexpected cases as "unknown"
+    ))
+  
+  no_matches_ties <- api_response %>%
+    filter(match_status_type == "no_match_or_tie",
+           unique_ID != "Unique ID") %>% 
+    separate(input_address, into = c("100_block_addr", "city", "state", "zip"), sep = ", ", fill = "right") %>% 
+    mutate(long = NA_real_,
+           lat = NA_real_) %>% 
+    select(-c("city", "match_status_type"))
+  
+  matches <- api_response %>%
+    separate(input_address, into = c("100_block_addr", "city", "state", "zip"), sep = ", ", fill = "right") %>% 
+    select(-city) %>%
+    filter(match_status_type == "match") %>%
+    separate(match_status, into = c("match_status", "match_type", "output_address",
+                                    "output_city", "output_state", "output_zip", "long", "lat",
+                                    "tiger_id", "side"), sep = ",", fill = "right", extra = "merge") %>% 
+    # drop unnecessary cols  
+    select(-c("match_status_type",  "match_type", "output_address",
+                "output_city", "output_state", "output_zip",
+                "tiger_id", "side")) %>% 
+    mutate(long = as.double(long),
+           lat = as.double(lat)) %>% 
+    group_by(long, lat) %>%
+    # Ensure all addresses within each lat/long pair are the same 
+    # by replacing them with the first address encountered in each pair
+    # There are occasional discrepancies in the addresses e.g. "St" v "Ave"
+    mutate(`100_block_addr` = first(`100_block_addr`))
+  
+  # bind "matches" and "no_matches_ties" dataframes together after processing
+  # Remove duplicate addresses as determined by address/zip pairings
+  api_response_df <- bind_rows(matches, no_matches_ties) %>% 
+    group_by(`100_block_addr`, zip) %>%
+    slice(1) %>%
+    ungroup()
+  
+  write_csv(api_response_df, census_geolocated_path, col_names = T, append = T)
 
-merged_df <- raw_df %>%
-  left_join(census_geodf, by = c("100_block_addr", "zip")) %>% 
-  filter(!is.na(lat) & !is.na(long))
+} else {
+  col_names <- c("unique_ID", "input_address", "match_status", "match_type", "output_address", "coordinates", "tiger_id", "side")
+  api_response <- read_csv(census_temp_path, col_names = col_names)
+  
+  api_response <- api_response %>% 
+    mutate(match_status_type = case_when(
+      grepl("^Match", match_status) ~ "match",
+      grepl("^No_Match", match_status) | grepl("^Tie", match_status) ~ "no_match_or_tie",
+      TRUE ~ "unknown"  # Handles any unexpected cases as "unknown"
+    )) %>% 
+    separate(coordinates, into = c("long", "lat"), sep = ",", convert = T)
 
+  no_matches_ties <- api_response %>%
+    filter(match_status_type == "no_match_or_tie",
+           unique_ID != "Unique ID") %>% 
+    separate(input_address, into = c("100_block_addr", "city", "state", "zip"), sep = ", ", fill = "right") %>% 
+    mutate(long = NA_real_,
+           lat = NA_real_) %>% 
+    select(-c("city", "match_type", "match_status_type", "output_address", "tiger_id", "side"))
+  
+  matches <- api_response %>%
+    separate(input_address, into = c("100_block_addr", "city", "state", "zip"), sep = ", ", fill = "right") %>% 
+    select(-city) %>%
+    filter(match_status_type == "match") %>%
+    # drop unnecessary cols  
+    select(-c("match_status_type",  "match_type", "output_address",
+              "tiger_id", "side")) %>% 
+    mutate(long = as.double(long),
+           lat = as.double(lat)) %>% 
+    group_by(long, lat) %>%
+    # Ensure all addresses within each lat/long pair are the same 
+    # by replacing them with the first address encountered in each pair
+    # There are occasional discrepancies in the addresses e.g. "St" v "Ave"
+    mutate(`100_block_addr` = first(`100_block_addr`))
+  
+  # bind "matches" and "no_matches_ties" dataframes together after processing
+  # Remove duplicate addresses as determined by address/zip pairings
+  api_response_df <- bind_rows(matches, no_matches_ties) %>% 
+    group_by(`100_block_addr`, zip) %>%
+    slice(1) %>%
+    ungroup()
+  
+  write_csv(api_response_df, census_geolocated_path, col_names = T, append = T)
+}
 
-write_csv(merged_df, census_geolocated_path, col_names = T, append = T)
+# delete temp files created during the api process
+file.remove(here("data", "census_temp.csv"))
+file.remove(here("data", "census_forgeolocation.csv"))
 
 end_time <- Sys.time()  # Capture end time
 duration_sec <- as.numeric(end_time - start_time, units = "secs")  # Calculate duration
@@ -116,5 +196,9 @@ hours <- duration_sec %/% 3600
 minutes <- (duration_sec %% 3600) %/% 60
 seconds <- duration_sec %% 60
 formatted_duration <- sprintf("%02d:%02d:%02d", hours, minutes, round(seconds))
+
+cat("Records processed on this run:", scales::comma(nrow(api_response_df)), "\n")
+cat("Records processed in total:", scales::comma(nrow(geo_df)), "\n")
+cat("Records remaining:", scales::comma(nrow(raw_df)-nrow(geo_df)), "\n")
 cat("Time elapsed:", formatted_duration, "h/m/s\n")
 
