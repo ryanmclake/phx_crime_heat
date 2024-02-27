@@ -5,65 +5,75 @@ library(dplyr)
 library(lubridate)
 library(sf)
 library(leaflet)
+library(leaflet.extras)
 library(ggplot2)
 library(here)
 library(plotly)
 
 # Load and preprocess the data
-geolocated_data_path <- here::here("data/crime_data_geolocated.csv") # nominatim data - not using for now
 raw_data_path <- here::here("data/crime_data_raw.csv")
 census_geolocated_path <- here::here("data/census_geolocated.csv") # census API data
 
+raw_df <- readr::read_csv(raw_data_path) %>% 
+    mutate(zip = as.character(zip))
 
-# raw_df <- readr::read_csv(raw_data_path) %>% 
-#     mutate(date = as.Date(occurred_on))
-
-# Assuming read_csv is from the readr package and it can handle this file path
 geo_df <- read_csv(census_geolocated_path) %>%
-    mutate(zip = as.character(zip), 
-           date = as.Date(occurred_on), # Correct column name for date
-           ucr_crime_category = as.character(ucr_crime_category),
-           lat = as.numeric(lat),  # Ensure lat is numeric
-           long = as.numeric(long)) %>%  # Ensure long is numeric
-    filter(!is.na(lat) & !is.na(long))
+    mutate(zip = as.character(zip),
+           lat = as.numeric(lat),
+           long = as.numeric(long)) %>%  
+    select(c("100_block_addr", "zip", "lat", "long"))
 
+app_df <- raw_df %>% 
+    left_join(geo_df, by = c("100_block_addr", "zip")) %>% 
+    # filter to just the geolocated addresses for now
+    filter(!is.na(lat),!is.na(long)) %>% 
+    slice_sample(n=10000, replace = F) # filter for now until performance is optimized
+
+
+#### UI ###########################
 # Update UI definition
-ui <- fluidPage(
-    theme = bslib::bs_theme(version = 5),
-    titlePanel("Crime Data Visualization"),
-    sidebarLayout(
-        sidebarPanel(
-            selectInput("yearSelect", "Select Year", 
-                        choices = c("All", as.character(2015:2023)), selected = "All", multiple = T),
-            sliderInput("dateRange", "Date",
-                        min = min(geo_df$date, na.rm = TRUE), 
-                        max = max(geo_df$date, na.rm = TRUE),
-                        value = range(geo_df$date, na.rm = TRUE), 
-                        timeFormat = "%Y-%m-%d",
-                        step = 1, 
-                        dragRange = TRUE),
-            selectInput("crimeType", "Crime",
-                        choices = c("All", unique(geo_df$ucr_crime_category)), selected = "All", multiple = T),
-            sliderInput("topAddresses", "Top addresses to display", 
-                         value = 1, min = 0, max = 50, step = 1),
-            checkboxInput("enableTopAddresses", "Enable Top Addresses Filter", value = FALSE),
-            actionButton("update", "Update"),
-            width = 3 # Set sidebar width to 3 columns
-        ),
-        mainPanel(
-            leafletOutput("map"),
-            plotlyOutput("crimeGraph"), # Add a plot output for the crime graph
-            width = 9 # Set main panel width to 9 columns
-        )
+
+app_sidebar = list(
+    selectInput("yearSelect", "Select Year", choices = c("All", as.character(2015:2023)), selected = "All", multiple = T),
+    sliderInput("dateRange", "Date",
+                min = min(app_df$occurred_on, na.rm = TRUE), 
+                max = max(app_df$occurred_on, na.rm = TRUE),
+                value = range(app_df$occurred_on, na.rm = TRUE), 
+                timeFormat = "%Y-%m-%d",
+                step = 1, 
+                dragRange = TRUE),
+    selectInput("crimeType", "Crime",
+                choices = c("All", unique(app_df$ucr_crime_category)), selected = "All", multiple = T),
+    sliderInput("topAddresses", "Top addresses to display", 
+                value = 1, min = 0, max = 50, step = 1),
+    checkboxInput("enableTopAddresses", "Enable Top Addresses Filter", value = FALSE),
+    actionButton("update", "Update"))
+
+ui <- page_navbar(
+    theme = bslib::bs_theme(version = 5, bootswatch = "journal"),
+    title = "Phoenix Crime App",
+    sidebar = bslib::sidebar(app_sidebar, width = 350), # Define sidebar here for consistency across all pages
+    nav_spacer(),
+    nav_panel(
+        "Map",
+        leafletOutput("map")),
+    nav_panel(
+        "Graphs",
+        plotlyOutput("crimeGraph")
+    ),
+    nav_panel( # Add this for the heatmap
+        "Heatmap",
+        leafletOutput("heatmap")
     )
 )
 
+#### Server  ###########################
 # Update server logic
 server <- function(input, output, session) {
     # Create a reactive expression that updates only when the update button is clicked
     filteredData <- eventReactive(input$update, {
-        data <- geo_df %>%
-            filter(date >= input$dateRange[1] & date <= input$dateRange[2],
+        data <- app_df %>%
+            filter(occurred_on >= input$dateRange[1] & occurred_on <= input$dateRange[2],
                    ucr_crime_category %in% input$crimeType)
         
         if (input$enableTopAddresses) {
@@ -78,7 +88,6 @@ server <- function(input, output, session) {
             data <- data %>%
                 semi_join(address_counts, by = "100_block_addr")
         }
-        
         data
     })
     
@@ -87,7 +96,7 @@ server <- function(input, output, session) {
         if("All" %in% input$yearSelect) {
             # If "All" is selected, reset the slider to the full date range
             updateSliderInput(session, "dateRange", 
-                              value = range(geo_df$date, na.rm = TRUE))
+                              value = range(app_df$occurred_on, na.rm = TRUE))
         } else {
             # For specific year selections, calculate the min start date and max end date
             years <- as.numeric(input$yearSelect)
@@ -103,7 +112,7 @@ server <- function(input, output, session) {
             # Check if "All" is the only option selected or if it was selected last
             if (length(input$crimeType) == 1 || tail(input$crimeType, n = 1) == "All") {
                 updateSelectInput(session, "crimeType", 
-                                  selected = c("All", unique(geo_df$ucr_crime_category)))
+                                  selected = c("All", unique(app_df$ucr_crime_category)))
             } else {
                 # If "All" is selected along with other options but not last, deselect "All"
                 updateSelectInput(session, "crimeType", 
@@ -124,14 +133,14 @@ server <- function(input, output, session) {
                                  fillOpacity = 0.2, 
                                  opacity = .2, 
                                  weight = 1,
-                                 popup = ~paste(ucr_crime_category, format(date, "%Y-%m-%d"), sep = "<br>"))
+                                 popup = ~paste(ucr_crime_category, format(occurred_on, "%Y-%m-%d"), sep = "<br>"))
         }
     })
     
     output$crimeGraph <- renderPlotly({
         # Aggregate filtered data by month
         monthly_crime_data <- filteredData() %>%
-            mutate(month = as.Date(format(date, "%Y-%m-01"))) %>% # Ensure 'month' is Date type for scale_x_date
+            mutate(month = as.Date(format(occurred_on, "%Y-%m-01"))) %>% # Ensure 'month' is Date type for scale_x_date
             group_by(month) %>%
             summarise(crime_count = n(), .groups = 'drop') %>%
             arrange(month)
@@ -175,6 +184,21 @@ server <- function(input, output, session) {
         # Convert the ggplot object to a Plotly object
         ggplotly(p)
 })
+    
+    output$heatmap <- renderLeaflet({
+        heatdata <- filteredData() # Get the filtered data
+        if (!is.null(heatdata)) {
+            # Render the heatmap
+            heatmap <- heatdata %>%
+                leaflet() %>%
+                addTiles() %>%
+                addHeatmap(lng = heatdata$long, lat = heatdata$lat,
+                           #gradient = RColorBrewer::brewer.pal(n=10, name = "Reds"),
+                           blur = 40, 
+                           max = 0.05, 
+                           radius = 25)
+        }
+    })
 }
 
 # Run the app
