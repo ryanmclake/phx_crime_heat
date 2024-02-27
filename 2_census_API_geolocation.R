@@ -1,19 +1,18 @@
 #### Experimenting with Census geocoding API rather than Nominatim #######################################
 # **********************************************************************************
 library(dplyr)
-library(httr)
 library(readr)
 library(stringr)
 library(tidyr)
 library(Hmisc)
 library(lubridate)
 library(here)
+library(httr) # census api
 
 start_time <- Sys.time()  # Capture start time
 
 # Paths
 raw_data_path <- here::here("data/crime_data_raw.csv")
-#geolocated_data_path <- here::here("data/crime_data_geolocated.csv")
 census_forgeolocation_path <- here::here("data/census_forgeolocation.csv")
 census_temp_path <- here::here("data/census_temp.csv")
 census_geolocated_path <- here::here("data/census_geolocated.csv")
@@ -43,9 +42,12 @@ if (file.exists(census_geolocated_path)) {
 }
 
 # Prepare the data frame as before
-records_to_process <- anti_join(raw_df, geo_df, by = c("100_block_addr", "zip"))
+raw_df <- raw_df %>%
+  distinct(`100_block_addr`, `zip`, .keep_all = T) # .keep_all keeps all cols in place
 
-records_to_process <- head(records_to_process, 1500)
+temp_records_to_process <- anti_join(raw_df, geo_df, by = c("100_block_addr", "zip"))
+
+records_to_process <- head(temp_records_to_process, 9000)
 
 # Add a unique ID and select necessary columns (adjust column names as necessary)
 records_to_process <- records_to_process %>%
@@ -198,7 +200,7 @@ seconds <- duration_sec %% 60
 formatted_duration <- sprintf("%02d:%02d:%02d", hours, minutes, round(seconds))
 
 cat("Records processed on this run:", scales::comma(nrow(api_response_df)), "\n")
-cat("Records processed in total:", scales::comma(nrow(geo_df)), "\n")
-cat("Records remaining:", scales::comma(nrow(raw_df)-nrow(geo_df)), "\n")
+cat("Records processed in total:", scales::comma(nrow(geo_df)+nrow(api_response_df)), "\n")
+cat("Records remaining:", scales::comma(nrow(temp_records_to_process)), "\n")
 cat("Time elapsed:", formatted_duration, "h/m/s\n")
 
