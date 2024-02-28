@@ -9,6 +9,9 @@ library(leaflet.extras)
 library(ggplot2)
 library(here)
 library(plotly)
+library(ggridges)
+library(viridis)
+library(hrbrthemes)
 
 # Load and preprocess the data
 raw_data_path <- here::here("data/crime_data_raw.csv")
@@ -60,8 +63,11 @@ ui <- page_navbar(
         leafletOutput("map")),
     nav_panel(
         "Graphs",
+        layout_columns(col_widths = c(6, 6, 12),
+        plotlyOutput("dayOfWeekHeatmap"),
         plotlyOutput("crimeGraph"),
-        plotlyOutput("dayOfWeekHeatmap") # Add this line for the heatmap
+        plotOutput("crimeTypeComparison")
+        )
     ),
     nav_panel( # Add this for the heatmap
         "Heatmap",
@@ -81,10 +87,7 @@ server <- function(input, output, session) {
         # Calculate incidents per address
         address_counts <- data %>%
             group_by(`100_block_addr`) %>%
-            summarise(incidents = n(), .groups = 'drop')
-        
-        # Calculate percentile ranks for the addresses
-        address_counts <- address_counts %>%
+            summarise(incidents = n(), .groups = 'drop') %>% 
             mutate(percentile_rank = ntile(incidents, 10)) # Assigns percentile rank from 1 (lowest) to 10 (highest)
         
         # Filter data based on selected percentiles from input
@@ -235,6 +238,42 @@ server <- function(input, output, session) {
                    ) 
         p
     })
+    
+    output$crimeTypeComparison <- renderPlot({
+        # Prepare data for the line chart
+        crime_data <- filteredData() %>%
+            group_by(date = as.Date(occurred_on), ucr_crime_category) %>%
+            summarise(crime_count = n(), .groups = 'drop') %>%
+            arrange(date)
+        
+        # Determine the range of dates and calculate the span of years
+        date_range <- range(crime_data$date)
+        start_year <- as.numeric(format(min(date_range), "%Y"))
+        end_year <- as.numeric(format(max(date_range), "%Y"))
+        years_spanned <- as.numeric(difftime(max(date_range), min(date_range), units = "days")) / 365.25
+        
+        # Decide date_breaks and date_labels based on the number of years spanned
+        if(years_spanned <= 3) {
+            date_breaks <- "1 month"
+            date_labels <- "%b %Y"
+        } else {
+            date_breaks <- "6 months"
+            date_labels <- "%b %Y"
+        }
+        
+        # Generate the line chart with improved x-axis labels
+        ggplot(crime_data, aes(x = date, y = crime_count, color = ucr_crime_category)) +
+            geom_line() +
+            geom_point() +
+            scale_x_date(date_breaks = date_breaks, date_labels = date_labels) + # Use determined breaks and labels
+            labs(title = "Crime Types Comparison Over Time",
+                 x = "Date",
+                 y = "Number of Crimes",
+                 color = "Crime Type") +
+            theme_minimal() +
+            theme(axis.text.x = element_text(angle = 45, hjust = 1))
+    })
+    
 }
 
 # Run the app
