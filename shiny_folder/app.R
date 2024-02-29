@@ -4,6 +4,7 @@ library(shiny)
 library(bslib)
 library(readr)
 library(dplyr)
+library(tidyr)
 library(lubridate)
 # mapping
 library(sf)
@@ -21,20 +22,37 @@ library(prophet)
 set.seed(2282024)
 raw_data_path <- here::here("data/crime_data_raw.csv")
 census_geolocated_path <- here::here("data/census_geolocated.csv") # census API data
+df_complete_path <- here::here("data/df_complete_forapp.gpkg")
+blockgroups_geom_path <- here::here("data/blockgroups_geom.gpkg")
 
-raw_df <- readr::read_csv(raw_data_path) %>% 
-    mutate(zip = as.character(zip))
+# raw_df <- readr::read_csv(raw_data_path) %>% 
+#     mutate(zip = as.character(zip))
+# 
+# geo_df <- read_csv(census_geolocated_path) %>%
+#     mutate(zip = as.character(zip),
+#            lat = as.numeric(lat),
+#            long = as.numeric(long)) %>%  
+#     select(c("block_addr_100", "zip", "lat", "long"))
+# 
+# app_df <- raw_df %>% 
+#     left_join(geo_df, by = c("block_addr_100", "zip")) %>% 
+#     filter(!is.na(lat),!is.na(long)) %>% 
+#     # filter for now until performance is optimized
+#     slice_sample(n=1000, replace = F) 
 
-geo_df <- read_csv(census_geolocated_path) %>%
-    mutate(zip = as.character(zip),
-           lat = as.numeric(lat),
-           long = as.numeric(long)) %>%  
-    select(c("100_block_addr", "zip", "lat", "long"))
+# temp <- sf::st_read(df_complete_path)
+# app_blockgroups_spatial <- sf::st_read(blockgroups_geom_path)
 
-app_df <- raw_df %>% 
-    left_join(geo_df, by = c("100_block_addr", "zip")) %>% 
-    filter(!is.na(lat),!is.na(long)) %>% 
-    slice_sample(n=50000, replace = F) # filter for now until performance is optimized
+temp <- temp %>%
+    mutate(unique_id = row_number())  # or use an existing unique identifier
+
+app_df <- temp %>% 
+    slice_sample(n=100000, replace = F) %>% 
+    st_set_geometry(NULL)
+
+# Extract spatial data
+app_df_crimes_spatial <- temp %>% 
+    select(geom, unique_id)  # Ensure unique_id is included
 
 #### Functions ####
 predict_crime_trends <- function(df) {
@@ -67,9 +85,9 @@ app_sidebar = list(
                 dragRange = TRUE),
     selectInput("crimeType", "Crime",
                 choices = c("All", unique(app_df$ucr_crime_category)), selected = "All", multiple = T),
-    sliderInput("percentileRange", "Select Percentile Range:",
-                min = 10, max = 100, value = c(10, 100), step = 10,
-                pre = "", post = "th percentile", ticks = TRUE, animate = F),
+    # sliderInput("percentileRange", "Select Percentile Range:",
+    #             min = 10, max = 100, value = c(10, 100), step = 10,
+    #             pre = "", post = "th percentile", ticks = TRUE, animate = F),
     actionButton("update", "Update"))
 
 ui <- page_navbar(
@@ -91,10 +109,11 @@ ui <- page_navbar(
         )
     ),
 ### Nav_panel — Heatmap
-    nav_panel(
-        "Heatmap",
-        leafletOutput("heatmap")
-    ),
+    # nav_panel(
+    #     "Heatmap",
+    #     verbatimTextOutput("dataSummary"),
+    #     leafletOutput("heatmap")
+    # ),
 ### Nav_panel — Predictions
 nav_panel(
     "Predictions",
@@ -110,24 +129,24 @@ server <- function(input, output, session) {
             filter(occurred_on >= input$dateRange[1] & occurred_on <= input$dateRange[2],
                    ucr_crime_category %in% input$crimeType)
         
-        # Filter data based on selected percentiles from percentile input, if anything other than All is chosen
-        if (!is.null(input$percentileRange) && 
-            !(length(input$percentileRange) == 1 && input$percentileRange[1] == "All")) {
-            
-            # Calculate incidents per address
-            address_counts <- data %>%
-                group_by(`100_block_addr`) %>%
-                summarise(incidents = n(), .groups = 'drop') %>% 
-                mutate(percentile_rank = ntile(incidents, 10)) # Assigns percentile rank from 1 (lowest) to 10 (highest)
-            
-            # Map slider values (10 to 100) to ntile ranks (1 to 10)
-            selected_percentiles <- seq(from = as.numeric(input$percentileRange[1])/10,
-                                        to = as.numeric(input$percentileRange[2])/10)
-            
-            # Filter data based on selected percentiles
-            data <- data %>%
-                semi_join(address_counts %>% filter(percentile_rank %in% selected_percentiles), by = "100_block_addr")
-        }
+        # # Filter data based on selected percentiles from percentile input, if anything other than All is chosen
+        # if (!is.null(input$percentileRange) &&
+        #     !(length(input$percentileRange) == 1 && input$percentileRange[1] == "All")) {
+        # 
+        #     # Calculate incidents per address
+        #     address_counts <- data %>%
+        #         group_by(block_addr_100) %>%
+        #         summarise(incidents = n(), .groups = 'drop') %>%
+        #         mutate(percentile_rank = ntile(incidents, 10)) # Assigns percentile rank from 1 (lowest) to 10 (highest)
+        # 
+        #     # Map slider values (10 to 100) to ntile ranks (1 to 10)
+        #     selected_percentiles <- seq(from = as.numeric(input$percentileRange[1])/10,
+        #                                 to = as.numeric(input$percentileRange[2])/10)
+        # 
+        #     # Filter data based on selected percentiles
+        #     data <- data %>%
+        #         semi_join(address_counts %>% filter(percentile_rank %in% selected_percentiles), by = "block_addr_100")
+        # }
         
         data
     })
@@ -161,20 +180,116 @@ server <- function(input, output, session) {
         }
     })
     
-    # Render the map output using the reactive expression for data
+    # Create a reactive expression for spatially joined and aggregated data
+    spatialAggData <- reactive({
+        # Ensure filteredData is not null before proceeding
+        if (is.null(filteredData())) {
+            return(NULL)
+        }
+        
+        # Spatially join filtered data with crime spatial data to get bg geometries
+        data_with_geom <- filteredData() %>%
+            left_join(app_blockgroups_spatial, by = "bg_geoid")
+        
+        # Aggregate data by bg_geoid to count incidents
+        incident_counts <- data_with_geom %>%
+            group_by(bg_geoid) %>%
+            summarise(incidents = n(), .groups = 'drop')
+        
+        # Join aggregated incident counts with block group spatial data
+        agg_spatial_data <- app_blockgroups_spatial %>%
+            left_join(incident_counts, by = "bg_geoid")# %>% 
+            #dplyr::mutate(incidents = tidyr::replace_na(incidents, 0)) # Replace NA in incidents with 0
+        
+        data_with_geom <- data_with_geom %>% 
+            select("bg_geoid", "median_incomeE", "percent_poc")
+        
+        agg_spatial_data <- agg_spatial_data %>% 
+            left_join(data_with_geom, by = "bg_geoid")
+        
+        agg_spatial_data
+    })
+    
+    # Render the map output
+    # output$map <- renderLeaflet({
+    #     # Check if spatialAggData is not null
+    #     if (!is.null(spatialAggData())) {
+    #         # Generate color palette based on incident counts
+    #         pal <- colorNumeric(palette = "viridis", domain = spatialAggData()$incidents)
+    #         
+    #         leaflet(data = spatialAggData()) %>%
+    #             addTiles() %>%
+    #             addPolygons(fillColor = ~pal(incidents),
+    #                         color = "#BDBDC3",
+    #                         fillOpacity = 0.8,
+    #                         weight = 1,
+    #                         popup = ~paste("Block Group:", bg_geoid, "<br>Crimes:", incidents, "<br>Median Income:", median_incomeE, "<br>Percent Minority:", percent_poc)) %>%
+    #             addLegend(pal = pal, values = ~incidents,
+    #                       title = "Crimes",
+    #                       opacity = 1)
+    #     }
+    # })
     output$map <- renderLeaflet({
-        if (!is.null(filteredData())) {
-            leaflet(data = filteredData()) %>%
-                addTiles() %>%
-                addCircleMarkers(~long, ~lat, 
-                                 color = "#333333", 
-                                 fillColor = "#333333", 
-                                 fillOpacity = 0.2, 
-                                 opacity = .2, 
-                                 weight = 1,
-                                 popup = ~paste(ucr_crime_category, format(occurred_on, "%Y-%m-%d"), sep = "<br>"))
+        pal_incidents <- colorNumeric(palette = "magma", domain = spatialAggData()$incidents)
+        pal_percent_poc <- colorNumeric(palette = "viridis", domain = spatialAggData()$percent_poc)
+        pal_income <- colorNumeric(palette = "viridis", domain = spatialAggData()$median_incomeE)
+        
+        if (!is.null(spatialAggData())) {
+            # Base leaflet map
+            map <- leaflet(data = spatialAggData()) %>%
+                addTiles() # Add default OpenStreetMap tiles
+            
+            # Incidents layer
+            map <- map %>% addPolygons(fillColor = ~pal_incidents(incidents),
+                                       fillOpacity = 0.4,
+                                       color = "#BDBDC3",
+                                       weight = 1,
+                                       group = "Incidents",
+                                       popup = ~paste("Block Group:", bg_geoid, 
+                                                      "<br>Crimes:", incidents, 
+                                                      "<br>Median Income:", median_incomeE, 
+                                                      "<br>Percent Minority:", percent_poc))
+            
+            # Percent POC layer
+            map <- map %>% addPolygons(fillColor = ~pal_income(median_incomeE),
+                                       fillOpacity = 0.4,
+                                       color = "#BDBDC3",
+                                       weight = 1,
+                                       group = "Median Income",
+                                       popup = ~paste("Block Group:", bg_geoid, 
+                                                      "<br>Crimes:", incidents, 
+                                                      "<br>Median Income:", median_incomeE, 
+                                                      "<br>Percent Minority:", percent_poc))
+            
+            # Legend for Incidents
+            map <- map %>% addLegend("bottomright", pal = pal_incidents, values = ~incidents,
+                                     title = "Crimes",
+                                     opacity = 1,
+                                     group = "Incidents")
+            
+            # Legend for Percent POC
+            # map <- map %>% addLegend("bottomleft", pal = pal_percent_poc, values = ~percent_poc,
+            #                          title = "Percent Minority",
+            #                          opacity = 1,
+            #                          group = "Percent POC",
+            #                          labFormat = labelFormat(suffix = "%"))
+            
+            # Legend for Income
+            map <- map %>% addLegend("bottomleft", pal = pal_income, values = ~median_incomeE,
+                                     title = "Median Income",
+                                     opacity = 1,
+                                     group = "Percent POC",
+                                     labFormat = labelFormat(prefix = "$"))
+                                     
+            
+            # Add layer control
+            map <- map %>% addLayersControl(overlayGroups = c("Incidents", "Percent POC"),
+                                            options = layersControlOptions(collapsed = FALSE))
+            
+            map
         }
     })
+    
     
     output$crimeGraph <- renderPlotly({
         # Aggregate filtered data by month
@@ -283,20 +398,6 @@ server <- function(input, output, session) {
               legend.position = "right",
               plot.title = element_text(hjust = 0))
         ggplotly(p)
-    })
-    
-# Heatmap navpanel
-    output$heatmap <- renderLeaflet({
-        heatdata <- filteredData() # Get the filtered data
-        if (!is.null(heatdata)) {
-            heatmap <- heatdata %>%
-                leaflet() %>%
-                addTiles() %>%
-                addHeatmap(lng = heatdata$long, lat = heatdata$lat,
-                           blur = 40, 
-                           max = 0.05, 
-                           radius = 25)
-        }
     })
     
 ### Prediction navpanel
