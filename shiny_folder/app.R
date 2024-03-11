@@ -47,7 +47,7 @@ temp <- temp %>%
     mutate(unique_id = row_number())  # or use an existing unique identifier
 
 app_df <- temp %>% 
-    slice_sample(n=100000, replace = F) %>% 
+    slice_sample(n=10000, replace = F) %>% 
     st_set_geometry(NULL)
 
 # Extract spatial data
