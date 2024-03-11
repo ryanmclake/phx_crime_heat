@@ -1,11 +1,10 @@
 # Setup / data manipulation
 library(here)
-library(shiny)
-library(bslib)
 library(readr)
 library(dplyr)
 library(tidyr)
 library(lubridate)
+library(stringr)
 # mapping
 library(sf)
 library(leaflet)
@@ -15,6 +14,10 @@ library(ggplot2)
 library(plotly)
 library(viridis)
 library(hrbrthemes)
+# shiny stuff
+library(shiny)
+library(bslib)
+library(shinycssloaders)
 # predictions
 library(prophet)
 
@@ -40,14 +43,16 @@ blockgroups_geom_path <- here::here("data/blockgroups_geom.gpkg")
 #     # filter for now until performance is optimized
 #     slice_sample(n=1000, replace = F) 
 
-# temp <- sf::st_read(df_complete_path)
-# app_blockgroups_spatial <- sf::st_read(blockgroups_geom_path)
+#temp <- sf::st_read(df_complete_path)
+#app_blockgroups_spatial <- sf::st_read(blockgroups_geom_path)
 
 temp <- temp %>%
-    mutate(unique_id = row_number())  # or use an existing unique identifier
+    mutate(unique_id = row_number(),
+           ucr_crime_category = stringr::str_to_title(ucr_crime_category))
+
 
 app_df <- temp %>% 
-    slice_sample(n=10000, replace = F) %>% 
+    slice_sample(n=5000, replace = F) %>% 
     st_set_geometry(NULL)
 
 # Extract spatial data
@@ -72,22 +77,20 @@ prepare_data_for_prophet <- function(df) {
 
 
 #### UI ###########################
-# Update UI definition
+setwd("/Users/natebender/Desktop/repo/phx_crime_heat/shiny_folder")
 
 app_sidebar = list(
     selectInput("yearSelect", "Select by Year or Specific Dates", choices = c("All", as.character(2015:2023)), selected = "All", multiple = T),
     sliderInput("dateRange", "",
-                min = min(app_df$occurred_on, na.rm = TRUE), 
-                max = max(app_df$occurred_on, na.rm = TRUE),
-                value = range(app_df$occurred_on, na.rm = TRUE), 
+                min = as.Date(min(app_df$occurred_on, na.rm = TRUE)), 
+                max = as.Date(max(app_df$occurred_on, na.rm = TRUE)),
+                value = as.Date(range(app_df$occurred_on, na.rm = TRUE)), 
                 timeFormat = "%Y-%m-%d",
                 step = 1, 
                 dragRange = TRUE),
     selectInput("crimeType", "Crime",
-                choices = c("All", unique(app_df$ucr_crime_category)), selected = "All", multiple = T),
-    # sliderInput("percentileRange", "Select Percentile Range:",
-    #             min = 10, max = 100, value = c(10, 100), step = 10,
-    #             pre = "", post = "th percentile", ticks = TRUE, animate = F),
+                choices = c("All", unique(app_df$ucr_crime_category)),
+                selected = "All", multiple = T),
     actionButton("update", "Update"))
 
 ui <- page_navbar(
@@ -98,14 +101,14 @@ ui <- page_navbar(
 ### Nav_panel — Map
     nav_panel(
         "Map",
-        leafletOutput("map")),
+        shinycssloaders::withSpinner(leafletOutput("map"), color = "#bf492f", color.background = "white")),
 ### Nav_panel — Graphs
     nav_panel(
         "Graphs",
         layout_columns(col_widths = c(6, 6, 12),
-        plotlyOutput("dayOfWeekHeatmap"),
-        plotlyOutput("crimeGraph"),
-        plotlyOutput("crimeTypeComparison")
+        shinycssloaders::withSpinner(plotlyOutput("dayOfWeekHeatmap"), color = "#bf492f", color.background = "white"),
+        shinycssloaders::withSpinner(plotlyOutput("crimeGraph"), color = "#bf492f", color.background = "white"),
+        shinycssloaders::withSpinner(plotlyOutput("crimeTypeComparison"), color = "#bf492f", color.background = "white")
         )
     ),
 ### Nav_panel — Heatmap
@@ -117,7 +120,8 @@ ui <- page_navbar(
 ### Nav_panel — Predictions
 nav_panel(
     "Predictions",
-    plotlyOutput("crimeTrendsPrediction"))
+    shinycssloaders::withSpinner(plotlyOutput("crimeTrendsPrediction"), color = "#bf492f", color.background = "white"),
+    )
 )
 
 #### Server  ###########################
