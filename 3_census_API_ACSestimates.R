@@ -99,51 +99,72 @@ acs_data <- acs_response %>%
 block_groups <- block_groups %>%
   left_join(acs_data, by = c("bg_geoid" = "bg_geoid"))
 
-# Perform the spatial join to append block group identifiers to crime incidents
-acs_sf_blockgroups <- st_join(acs_sf, block_groups)
+### Phoenix Police jurisdiction polygon
+url <- "https://mapping-phoenix.opendata.arcgis.com/api/download/v1/items/811dd8a9568d4d018fc9a6f6ef8ed329/shapefile?layers=0"
+zip_dest <- here::here("data/phoenix_shapefile.zip")
+download.file(url, zip_dest, mode = "wb")
+unzip(zip_dest, exdir = "data/phoenix_shapefile")
+shapefile_path <- "data/phoenix_shapefile" # Adjust this path to the actual unzipped shapefile location
+phoenix_pd <- st_read(shapefile_path) %>% 
+  st_transform(st_crs(block_groups)) # Ensure CRS match
 
-sf::st_write(acs_sf_blockgroups, df_complete_path)
+block_groups <- block_groups %>% 
+  filter(st_intersects(geometry, st_geometry(phoenix_pd), sparse = FALSE) %>% apply(1, any))
+  
+acs_sf_blockgroups <- block_groups %>% 
+  st_join(acs_sf)
+
+
+
+# Perform the spatial join to append block group identifiers to crime incidents
+#acs_sf_blockgroups <- st_join(acs_sf, block_groups)
+
+
+
+
+
+sf::st_write(acs_sf_blockgroups, df_complete_path, append = F)
 
 block_groups <- block_groups %>% 
   select(bg_geoid, geometry)
 
-sf::st_write(block_groups, blockgroups_geom_path)
+sf::st_write(block_groups, blockgroups_geom_path, append = F)
 
 
 ##### REVISIT LATER - drop incidents that cannot be located in a bg #####
 # Mapping for testing
-# acs_sf_blockgroups <- acs_sf_blockgroups %>% 
-#   select(block_addr_100, zip, bg_geoid) %>% 
-#   filter(!is.na(bg_geoid))
-# 
-# incident_counts <- acs_sf_blockgroups %>%
-#   st_set_geometry(NULL) %>%
-#   group_by(bg_geoid) %>%
-#   summarise(incident_count = n())
-# 
-# block_groups <- merge(block_groups, incident_counts, by = "bg_geoid", all.x = TRUE)
-# block_groups$incident_count <- ifelse(is.na(block_groups$incident_count), 0, block_groups$incident_count)
-# 
-# end_time <- Sys.time()
-# calc_duration(start_time, end_time)
-# 
-# breaks <- c(0, 1, 10, 25, 50, 100, 200, 500, 1000, 3000, max(block_groups$incident_count))
-# color_palette <- viridis::viridis(length(breaks))
-# 
-# 
-# block_groups$binned_incidents <- cut(block_groups$incident_count, 
-#                                      breaks = breaks, 
-#                                      include.lowest = TRUE, 
-#                                      labels = FALSE)
-# 
-# # Convert binned incidents to factor for coloring purposes
-# block_groups$binned_incidents <- factor(block_groups$binned_incidents)
-# 
-# # Use the generated color palette and custom breaks in the mapview call
-# map <- mapview(block_groups, zcol = "incident_count", 
-#                col.regions = color_palette, 
-#                at = breaks,
-#                alpha.regions = 0.5)
-# map
+acs_sf_blockgroups <- acs_sf_blockgroups %>%
+  select(block_addr_100, zip, bg_geoid) %>%
+  filter(!is.na(bg_geoid))
+
+incident_counts <- acs_sf_blockgroups %>%
+  st_set_geometry(NULL) %>%
+  group_by(bg_geoid) %>%
+  summarise(incident_count = n())
+
+block_groups <- merge(block_groups, incident_counts, by = "bg_geoid", all.x = TRUE)
+block_groups$incident_count <- ifelse(is.na(block_groups$incident_count), 0, block_groups$incident_count)
+
+end_time <- Sys.time()
+calc_duration(start_time, end_time)
+
+breaks <- c(0, 1, 10, 25, 50, 100, 200, 500, 1000, 3000, max(block_groups$incident_count))
+color_palette <- viridis::viridis(length(breaks))
+
+
+block_groups$binned_incidents <- cut(block_groups$incident_count,
+                                     breaks = breaks,
+                                     include.lowest = TRUE,
+                                     labels = FALSE)
+
+# Convert binned incidents to factor for coloring purposes
+block_groups$binned_incidents <- factor(block_groups$binned_incidents)
+
+# Use the generated color palette and custom breaks in the mapview call
+map <- mapview(block_groups, zcol = "incident_count",
+               col.regions = color_palette,
+               at = breaks,
+               alpha.regions = 0.5)
+map
 
 
