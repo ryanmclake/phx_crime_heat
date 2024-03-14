@@ -133,38 +133,38 @@ sf::st_write(block_groups, blockgroups_geom_path, append = F)
 
 ##### REVISIT LATER - drop incidents that cannot be located in a bg #####
 # Mapping for testing
-acs_sf_blockgroups <- acs_sf_blockgroups %>%
-  select(block_addr_100, zip, bg_geoid) %>%
-  filter(!is.na(bg_geoid))
-
-incident_counts <- acs_sf_blockgroups %>%
-  st_set_geometry(NULL) %>%
-  group_by(bg_geoid) %>%
-  summarise(incident_count = n())
-
-block_groups <- merge(block_groups, incident_counts, by = "bg_geoid", all.x = TRUE)
-block_groups$incident_count <- ifelse(is.na(block_groups$incident_count), 0, block_groups$incident_count)
-
-end_time <- Sys.time()
-calc_duration(start_time, end_time)
-
-breaks <- c(0, 1, 10, 25, 50, 100, 200, 500, 1000, 3000, max(block_groups$incident_count))
-color_palette <- viridis::viridis(length(breaks))
-
-
-block_groups$binned_incidents <- cut(block_groups$incident_count,
-                                     breaks = breaks,
-                                     include.lowest = TRUE,
-                                     labels = FALSE)
-
-# Convert binned incidents to factor for coloring purposes
-block_groups$binned_incidents <- factor(block_groups$binned_incidents)
-
-# Use the generated color palette and custom breaks in the mapview call
-map <- mapview(block_groups, zcol = "incident_count",
-               col.regions = color_palette,
-               at = breaks,
-               alpha.regions = 0.5)
-map
+# acs_sf_blockgroups <- acs_sf_blockgroups %>%
+#   select(block_addr_100, zip, bg_geoid) %>%
+#   filter(!is.na(bg_geoid))
+# 
+# incident_counts <- acs_sf_blockgroups %>%
+#   st_set_geometry(NULL) %>%
+#   group_by(bg_geoid) %>%
+#   summarise(incident_count = n())
+# 
+# block_groups <- merge(block_groups, incident_counts, by = "bg_geoid", all.x = TRUE)
+# block_groups$incident_count <- ifelse(is.na(block_groups$incident_count), 0, block_groups$incident_count)
+# 
+# end_time <- Sys.time()
+# calc_duration(start_time, end_time)
+# 
+# breaks <- c(0, 1, 10, 25, 50, 100, 200, 500, 1000, 3000, max(block_groups$incident_count))
+# color_palette <- viridis::viridis(length(breaks))
+# 
+# 
+# block_groups$binned_incidents <- cut(block_groups$incident_count,
+#                                      breaks = breaks,
+#                                      include.lowest = TRUE,
+#                                      labels = FALSE)
+# 
+# # Convert binned incidents to factor for coloring purposes
+# block_groups$binned_incidents <- factor(block_groups$binned_incidents)
+# 
+# # Use the generated color palette and custom breaks in the mapview call
+# map <- mapview(block_groups, zcol = "incident_count",
+#                col.regions = color_palette,
+#                at = breaks,
+#                alpha.regions = 0.5)
+# map
 
 

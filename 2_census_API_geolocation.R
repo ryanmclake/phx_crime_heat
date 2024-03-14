@@ -185,6 +185,9 @@ if (length(api_response) <= 3) {
     slice(1) %>%
     ungroup()
   
+  api_response_df <- api_response_df %>% 
+    rename(block_addr_100 = `100_block_addr`)
+  
   write_csv(api_response_df, census_geolocated_path, col_names = T, append = T)
 }
 
