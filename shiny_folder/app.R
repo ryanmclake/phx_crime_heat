@@ -82,6 +82,7 @@ app_sidebar = list(
     selectInput("crimeType", "Crime",
                 choices = c("All", unique(app_df$ucr_crime_category)),
                 selected = "All", multiple = T),
+    actionButton("reset", "Reset"),
     actionButton("update", "Update"))
 
 ui <- page_navbar(
@@ -90,24 +91,15 @@ ui <- page_navbar(
     sidebar = bslib::sidebar(app_sidebar, width = 400), # Define sidebar here for consistency across all pages
     nav_spacer(),
 ### Nav_panel — Map
-    # nav_panel(
-    #     "Map",
-    #     shinycssloaders::withSpinner(leafletOutput("map"), color = "#bf492f", color.background = "white")),
 ### Nav_panel — Graphs
     nav_panel(
         "Graphs",
-        layout_columns(col_widths = c(6, 6, 12),
-        shinycssloaders::withSpinner(plotlyOutput("dayOfWeekHeatmap"), color = "#bf492f", color.background = "white"),
-        #tableOutput("dayOfWeektable")
+        layout_columns(col_widths = c(12, 12),
+        shinycssloaders::withSpinner(plotlyOutput("dayOfWeekHeatmap", height = "320px"), color = "#bf492f", color.background = "white"),
+        #leafletOutput("spatial_heatmap")
         #shinycssloaders::withSpinner(plotlyOutput("crimeGraph"), color = "#bf492f", color.background = "white"),
         #shinycssloaders::withSpinner(plotlyOutput("crimeTypeComparison"), color = "#bf492f", color.background = "white")
         )
-    ),
-### Nav_panel — Heatmap
-    nav_panel(
-        "Heatmap",
-        #verbatimTextOutput("dataSummary"),
-        leafletOutput("spatial_heatmap")
     )
 )
 
@@ -151,133 +143,26 @@ server <- function(input, output, session) {
         }
     })
     
-    userSelections <- reactiveValues(
-        temporal = NULL,
-        spatial = NULL
-    )
+    # Reactive value as a counter for reset clicks, forcing plot reactivity only on reset
+    resetClicks <- reactiveVal(0)
+    hist_reset <- reactiveVal(TRUE)
+    hasSelection <- reactiveVal(FALSE)
     
-    observe({
-        temporalSelection <- event_data("plotly_selected", source = "A")
-        if (!is.null(temporalSelection)) {
-            # Print the selection to the console for debugging
-            print(temporalSelection)
-            
-            # Update userSelections based on temporal heatmap interaction
-            # Here, we directly store the temporalSelection object
-            # You might want to extract specific details instead, depending on your needs
-         #   userSelections$temporal <- temporalSelection
-        }
+    # Observe reset button clicks and increment resetClicks
+    observeEvent(input$reset, {
+        resetClicks(resetClicks() + 1)
+        hasSelection(FALSE)
+        hist_reset(TRUE)
     })
     
-    # Create a reactive expression for spatially joined and aggregated data
-    # spatialAggData <- reactive({
-    #     # Ensure filteredData is not null before proceeding
-    #     if (is.null(filteredData())) {
-    #         return(NULL)
-    #     }
-    #     
-    #     # Spatially join filtered data with crime spatial data to get bg geometries
-    #     data_with_geom <- filteredData() %>%
-    #         left_join(app_blockgroups_spatial, by = "bg_geoid")
-    #     
-    #     # Aggregate data by bg_geoid to count incidents
-    #     incident_counts <- data_with_geom %>%
-    #         group_by(bg_geoid) %>%
-    #         summarise(incidents = n(), .groups = 'drop')
-    #     
-    #     # Join aggregated incident counts with block group spatial data
-    #     agg_spatial_data <- app_blockgroups_spatial %>%
-    #         left_join(incident_counts, by = "bg_geoid")# %>% 
-    #         #dplyr::mutate(incidents = tidyr::replace_na(incidents, 0)) # Replace NA in incidents with 0
-    #     
-    #     data_with_geom <- data_with_geom %>% 
-    #         select("bg_geoid", "median_incomeE", "percent_poc")
-    #     
-    #     agg_spatial_data <- agg_spatial_data %>% 
-    #         left_join(data_with_geom, by = "bg_geoid")
-    #     
-    #     agg_spatial_data
-    # })
-    
-    # Render the map output
-    # output$map <- renderLeaflet({
-    #     # Check if spatialAggData is not null
-    #     if (!is.null(spatialAggData())) {
-    #         # Generate color palette based on incident counts
-    #         pal <- colorNumeric(palette = "viridis", domain = spatialAggData()$incidents)
-    #         
-    #         leaflet(data = spatialAggData()) %>%
-    #             addTiles() %>%
-    #             addPolygons(fillColor = ~pal(incidents),
-    #                         color = "#BDBDC3",
-    #                         fillOpacity = 0.8,
-    #                         weight = 1,
-    #                         popup = ~paste("Block Group:", bg_geoid, "<br>Crimes:", incidents, "<br>Median Income:", median_incomeE, "<br>Percent Minority:", percent_poc)) %>%
-    #             addLegend(pal = pal, values = ~incidents,
-    #                       title = "Crimes",
-    #                       opacity = 1)
-    #     }
-    # })
-    # output$map <- renderLeaflet({
-    #     pal_incidents <- colorNumeric(palette = "magma", domain = spatialAggData()$incidents)
-    #     pal_percent_poc <- colorNumeric(palette = "viridis", domain = spatialAggData()$percent_poc)
-    #     pal_income <- colorNumeric(palette = "viridis", domain = spatialAggData()$median_incomeE)
-    #     
-    #     if (!is.null(spatialAggData())) {
-    #         # Base leaflet map
-    #         map <- leaflet(data = spatialAggData()) %>%
-    #             addTiles() # Add default OpenStreetMap tiles
-    #         
-    #         # Incidents layer
-    #         map <- map %>% addPolygons(fillColor = ~pal_incidents(incidents),
-    #                                    fillOpacity = 0.4,
-    #                                    color = "#BDBDC3",
-    #                                    weight = 1,
-    #                                    group = "Incidents",
-    #                                    popup = ~paste("Block Group:", bg_geoid, 
-    #                                                   "<br>Crimes:", incidents, 
-    #                                                   "<br>Median Income:", median_incomeE, 
-    #                                                   "<br>Percent Minority:", percent_poc))
-    #         
-    #         # Percent POC layer
-    #         map <- map %>% addPolygons(fillColor = ~pal_income(median_incomeE),
-    #                                    fillOpacity = 0.4,
-    #                                    color = "#BDBDC3",
-    #                                    weight = 1,
-    #                                    group = "Median Income",
-    #                                    popup = ~paste("Block Group:", bg_geoid, 
-    #                                                   "<br>Crimes:", incidents, 
-    #                                                   "<br>Median Income:", median_incomeE, 
-    #                                                   "<br>Percent Minority:", percent_poc))
-    #         
-    #         # Legend for Incidents
-    #         map <- map %>% addLegend("bottomright", pal = pal_incidents, values = ~incidents,
-    #                                  title = "Crimes",
-    #                                  opacity = 1,
-    #                                  group = "Incidents")
-    #         
-    #         # Legend for Percent POC
-    #         # map <- map %>% addLegend("bottomleft", pal = pal_percent_poc, values = ~percent_poc,
-    #         #                          title = "Percent Minority",
-    #         #                          opacity = 1,
-    #         #                          group = "Percent POC",
-    #         #                          labFormat = labelFormat(suffix = "%"))
-    #         
-    #         # Legend for Income
-    #         map <- map %>% addLegend("bottomleft", pal = pal_income, values = ~median_incomeE,
-    #                                  title = "Median Income",
-    #                                  opacity = 1,
-    #                                  group = "Percent POC",
-    #                                  labFormat = labelFormat(prefix = "$"))
-    #                                  
-    #         
-    #         # Add layer control
-    #         map <- map %>% addLayersControl(overlayGroups = c("Incidents", "Percent POC"),
-    #                                         options = layersControlOptions(collapsed = FALSE))
-    #         
-    #         map
-    #     }
-    # })
+    # Capture selections to update hasSelection status without forcing plot redraw
+    observeEvent(event_data("plotly_selected"), {
+        selected <- event_data("plotly_selected")
+        if (!is.null(selected)) {
+            hasSelection(TRUE)
+            hist_reset(FALSE)
+        }
+    }, ignoreNULL = TRUE) # Important for initialization phase
     
 # Yearly crime line graph
 #     output$crimeGraph <- renderPlotly({
@@ -339,49 +224,37 @@ server <- function(input, output, session) {
                       hourLabel = first(hourLabel),
                       .groups = 'drop')
 
-        data$dayOfWeek <- factor(data$dayOfWeek, levels = c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"))
+        data$dayOfWeek <- factor(data$dayOfWeek, levels = c("Mon", "Tue", "Wed", "Thurs", "Fri", "Sat", "Sun"))
         data$hourOfDay <- factor(data$hourLabel, levels = c("12 AM", paste(1:11, "AM"), "12 PM", paste(1:11, "PM")), ordered = TRUE)
 
-        # p <- plot_ly(data, x = ~dayOfWeek, y = ~hourOfDay, z = ~crimeCount, type = "heatmap", colors = "Reds",
-        #              colorbar = list(title = "Count")) %>%
-        #     layout(title = "Comparison by Day and Hour",
-        #            xaxis = list(title = "Day of Week"),
-        #            yaxis = list(title = "Hour", categoryorder = "array", categoryarray = c("12 AM", paste(1:11, "AM"), "12 PM", paste(1:11, "PM")))
-        #            )
-        # p
-        
-        gg_heatmap <- ggplot(data, aes(x = dayOfWeek, y = hourLabel, fill = crimeCount)) +
-            geom_tile() +
-            scale_fill_gradient(low = "white", high = "red") +
-            labs(x = "Day of Week", y = "Hour of Day", title = "Crime Count by Day and Hour") +
-            theme_minimal()
-        
-        p <- ggplotly(gg_heatmap, source = "A") %>%
-            layout(dragmode = "select")
-        
+        p <- plot_ly(data, x = ~dayOfWeek, y = ~hourOfDay, z = ~crimeCount, type = "heatmap", colors = "Reds",
+                     colorbar = list(title = "Count")) %>%
+            layout(title = "Comparison by Day and Hour",
+                   xaxis = list(title = "Day of Week"),
+                   yaxis = list(title = "Hour", categoryorder = "array", categoryarray = c("12 AM", paste(1:11, "AM"), "12 PM", paste(1:11, "PM")))
+                   )
         p
+        
+        # resetClicks()
+        # 
+        # gg_heatmap <- ggplot(data, aes(x = dayOfWeek, y = hourLabel, fill = crimeCount)) +
+        #     geom_tile() +
+        #     scale_fill_gradient(low = "white", high = "red") +
+        #     labs(x = "Day of Week", y = "Hour of Day", title = "Crime Count by Day and Hour") +
+        #     theme_minimal()
+        # 
+        # p <- ggplotly(gg_heatmap) %>%
+        #     layout(dragmode = "select")
+        # p
     })
 
-    
-    # output$dayOfWeektable <- renderTable({
-    #     # Prepare the data: extract day of the week and hour of the day
-    #     data <- filteredData() %>%
-    #         mutate(dayOfWeek = weekdays(occurred_on),
-    #                hourOfDay = as.integer(format(occurred_on, "%H")), # Use %H for 24-hour format
-    #                hourLabel = if_else(hourOfDay == 0, "12 AM",
-    #                                    if_else(hourOfDay < 12, paste(hourOfDay, "AM"),
-    #                                            if_else(hourOfDay == 12, "12 PM", paste(hourOfDay - 12, "PM"))))
-    #         ) %>%
-    #         group_by(dayOfWeek, hourOfDay) %>%
-    #         summarise(crimeCount = n(),
-    #                   hourLabel = first(hourLabel),
-    #                   .groups = 'drop')
-    #     
-    #     data$dayOfWeek <- factor(data$dayOfWeek, levels = c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"))
-    #     data$hourOfDay <- factor(data$hourLabel, levels = c("12 AM", paste(1:11, "AM"), "12 PM", paste(1:11, "PM")), ordered = TRUE)
-    #     
-    #     data
-    # })
+    observe({
+        selectedData <- event_data("plotly_selected")
+        if (!is.null(selectedData)) {
+            print(str(selectedData))
+            print(head(selectedData))
+        }
+    })
     
     
 # Crime type comparison stacked bar graph
@@ -426,41 +299,24 @@ server <- function(input, output, session) {
     
 ### Navpanel - Spatial Heatmap
     output$spatial_heatmap <- renderLeaflet({
-        data <- filteredData() # Use the already filtered data
+        # 'data' is a reactive expression, so it needs to be called as a function to retrieve its value
+        reactiveData <- reactive({
+            selectedData <- event_data("plotly_selected")
+            if (hist_reset() || is.null(selectedData)) {
+                return(filteredData())
+            } else {
+                # Ensure this matches the expected structure of your selectedData
+                return(filteredData()[selectedData$pointIndex + 1, ])
+            }
+        })
         
-        # Initialize the leaflet map
-        leaflet(data) %>%
+        # Initialize the leaflet map with reactive data
+        leaflet() %>%
             addTiles() %>% # Add default OpenStreetMap tiles
-            addHeatmap(lng = ~longitude, lat = ~latitude, intensity = ~1,
+            # Use 'reactiveData()' to get the current value of the reactive expression
+            addHeatmap(data = reactiveData(), lng = ~long, lat = ~lat, intensity = ~1,
                        blur = 20, max = 0.05, radius = 15, gradient = heat.colors(10))
     })
-    
-    
-    
-### Prediction navpanel
-    # output$crimeTrendsPrediction <- renderPlotly({
-    #     # Assuming `app_df` has at least 'occurred_on' and 'crime_count' columns
-    #     crime_data <- prepare_data_for_prophet(app_df)
-    #     forecast <- predict_crime_trends(crime_data)
-    #     
-    #     # Determine the maximum date in the historical data
-    #     max_date <- max(crime_data$ds)
-    #     last_year_data <- crime_data %>%
-    #         filter(ds >= (max_date %m-% years(1)))
-    #     
-    #     # Plotting
-    #     p <- plot_ly() %>%
-    #         add_trace(data = last_year_data, x = ~ds, y = ~y, name = 'Actual - Last Year', type = 'scatter', mode = 'lines',
-    #                   line = list(color = 'blue')) %>%
-    #         add_trace(data = forecast, x = ~ds, y = ~yhat, name = 'Predicted', type = 'scatter', mode = 'lines',
-    #                   line = list(color = 'red')) %>%
-    #         add_ribbons(data = forecast, x = ~ds, ymin = ~yhat_lower, ymax = ~yhat_upper, name = 'Confidence Interval',
-    #                     fillcolor = 'rgba(255,0,0,0.2)', line = list(color = 'transparent')) %>%
-    #         layout(title = "Weekly Predicted Crime Trends",
-    #                xaxis = list(title = "Week"),
-    #                yaxis = list(title = "Count"))
-    #     p
-    # })
     
 }
 
@@ -492,17 +348,12 @@ server <- function(input, output, session) {
     # Reactive value as a counter for reset clicks, forcing plot reactivity only on reset
     resetClicks <- reactiveVal(0)
     hist_reset <- reactiveVal(TRUE)
-    
-    # Reactive value to keep track of whether there's a selection
     hasSelection <- reactiveVal(FALSE)
     
     # Observe reset button clicks and increment resetClicks
     observeEvent(input$reset, {
         resetClicks(resetClicks() + 1)
         hasSelection(FALSE)
-    })
-
-    observeEvent(input$reset, {
         hist_reset(TRUE)
     })
         
@@ -510,7 +361,7 @@ server <- function(input, output, session) {
     observeEvent(event_data("plotly_selected"), {
         hasSelection(TRUE)
         hist_reset(FALSE)
-    }, ignoreNULL = TRUE) # Ignore initial NULL to avoid unnecessary reactivity
+    }, ignoreNULL = TRUE)
     
     # Render the scatterplot
     output$scatterplot <- renderPlotly({
@@ -539,4 +390,143 @@ server <- function(input, output, session) {
 }
 
 # Run the app
+shinyApp(ui = ui, server = server)
+
+
+
+############
+#devtools::install_github("rstudio/crosstalk")
+#install.packages("crosstalk")
+#install.packages("d3scatter")
+#devtools::install_github("jcheng5/d3scatter")
+library(d3scatter)
+library(crosstalk)
+
+shared_mtcars <- SharedData$new(mtcars)
+bscols(widths = c(3,NA,NA),
+       list(
+           filter_checkbox("cyl", "Cylinders", shared_mtcars, ~cyl, inline = TRUE),
+           filter_slider("hp", "Horsepower", shared_mtcars, ~hp, width = "100%"),
+           filter_select("auto", "Automatic", shared_mtcars, ~ifelse(am == 0, "Yes", "No"))
+       ),
+       d3scatter(shared_mtcars, ~wt, ~mpg, ~factor(cyl), width="100%", height=250),
+       d3scatter(shared_mtcars, ~hp, ~qsec, ~factor(cyl), width="100%", height=250)
+)
+
+shared_quakes <- SharedData$new(quakes[sample(nrow(quakes), 100),])
+bscols(
+    leaflet(shared_quakes, width = "100%", height = 300) %>%
+        addTiles() %>%
+        addMarkers(),
+    d3scatter(shared_quakes, ~depth, ~mag, width = "100%", height = 300)
+)
+
+shared_app_df <- SharedData$new(app_df)
+bscols(
+    d3scatter(shared_app_df, ~depth, ~mag, width = "100%", height = 300),
+    leaflet(shared_app_df, width = "100%", height = 300) %>%
+        addTiles() %>%
+        addMarkers()
+)
+
+
+#######
+
+library(shiny)
+library(plotly)
+library(leaflet)
+library(dplyr)
+
+ui <- fluidPage(
+    titlePanel("Crime Data Visualization"),
+    sidebarLayout(
+        sidebarPanel(
+            selectInput("dayOfWeekSelect", "Select Day of Week",
+                        choices = c("All", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"),
+                        selected = "All", multiple = TRUE),
+            sliderInput("hourOfDaySlider", "Select Hour of Day",
+                        min = 0, max = 23, value = c(0, 23), step = 1,
+                        ticks = FALSE, animate = TRUE)
+        ),
+        mainPanel(
+            plotlyOutput("dayOfWeekHeatmap"), # Temporal Heatmap in its existing location
+            navset_card_underline(
+                id = "tabs", # ID for the navigation set
+                nav("Spatial Heatmap", leafletOutput("spatial_heatmap")), # Spatial Heatmap tab
+                nav("Leaflet Map", leafletOutput("leafletMap")) # Leaflet map tab (if you want another regular map)
+            )
+        )
+    )
+)
+
+server <- function(input, output) {
+    filteredData <- reactive({
+        selectedDays <- input$dayOfWeekSelect
+        # Adjust for "All" selection
+        if("All" %in% selectedDays) {
+            selectedDays <- c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+        }
+        
+        # Prepare your dataset
+        app_df %>%
+            mutate(dayOfWeek = factor(weekdays(occurred_on, abbreviate = FALSE),
+                                      levels = c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")),
+                   hourOfDay = as.integer(format(occurred_on, "%H"))) %>%
+            filter(dayOfWeek %in% selectedDays, # Use the possibly adjusted list of days
+                   hourOfDay >= input$hourOfDaySlider[1],
+                   hourOfDay <= input$hourOfDaySlider[2])
+    })
+    
+    output$dayOfWeekHeatmap <- renderPlotly({
+        # Define the levels for days of the week to ensure correct order
+        dayLevels <- c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+        
+        # Generate all combinations of dayOfWeek and hourOfDay
+        allCombinations <- expand.grid(
+            dayOfWeek = factor(dayLevels, levels = dayLevels),
+            hourOfDay = 0:23
+        )
+        
+        allCombinations$hourLabel <- sprintf("%02d:00", allCombinations$hourOfDay)
+        
+        # Process your filtered data
+        data <- filteredData() %>%
+            mutate(dayOfWeek = factor(weekdays(occurred_on, abbreviate = FALSE), levels = dayLevels),
+                   hourOfDay = as.integer(format(occurred_on, "%H")),
+                   hourLabel = sprintf("%02d:00", hourOfDay)) %>%
+            group_by(dayOfWeek, hourLabel, hourOfDay) %>%
+            summarise(crimeCount = n(), .groups = 'drop') %>%
+            ungroup()
+        
+        # Ensure all day and hour combinations are present
+        data <- right_join(allCombinations, data, by = c("dayOfWeek", "hourLabel", "hourOfDay"))
+        
+        # Replace NA counts with 0
+        data$crimeCount[is.na(data$crimeCount)] <- 0
+        
+        # Plot
+        plot_ly(data, x = ~dayOfWeek, y = ~hourLabel, z = ~crimeCount, type = "heatmap", colors = "Reds") %>%
+            layout(title = "Crime Count by Day and Hour",
+                   xaxis = list(title = "Day of Week", tickangle = -45, type = "category"),
+                   yaxis = list(title = "Hour of Day", dtick = 1))
+    })
+    
+    output$leafletMap <- renderLeaflet({
+        data <- filteredData()
+        
+        leaflet(data) %>%
+            addTiles() %>%
+            addCircleMarkers(~long, ~lat, popup = ~paste(dayOfWeek, sprintf("%02d:00", hourOfDay)))
+    })
+    
+    output$spatial_heatmap <- renderLeaflet({
+        # Use 'filteredData()' directly as it's already a reactive expression
+        leaflet(data = filteredData()) %>%
+            addTiles() %>%
+            addHeatmap(lng = ~long, lat = ~lat, intensity = ~1,
+                       blur = 20, max = 0.05, radius = 15, 
+                       gradient = heat.colors(10))
+    })
+}
+
 shinyApp(ui = ui, server = server)
