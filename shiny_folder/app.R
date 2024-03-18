@@ -52,7 +52,7 @@ app_df <- raw_df %>%
     slice_sample(n=1000, replace = F)
 
 # temp <- sf::st_read(df_complete_path)
-# app_blockgroups_spatial <- sf::st_read(blockgroups_geom_path)
+ app_blockgroups_spatial <- sf::st_read(blockgroups_geom_path)
 
 # temp <- temp %>%
 #     mutate(unique_id = row_number(),
@@ -78,15 +78,15 @@ app_sidebar <- list(
         selected = "All",
         multiple = TRUE
     ),
-    sliderTextInput(
+    sliderInput(
         inputId = "dateRange",
         label = "Select Date Range",
-        grid = FALSE,
-        choices = format(unique(sort(app_df$occurred_on)), "%Y-%m-%d"),
-        selected = format(range(app_df$occurred_on, na.rm = TRUE), "%Y-%m-%d"), # Select the full range by default
+        min = as.Date(min(app_df$occurred_on), "%Y-%m-%d"),
+        max = as.Date(max(app_df$occurred_on), "%Y-%m-%d"),
+        value = as.Date(range(app_df$occurred_on, na.rm = TRUE), "%Y-%m-%d"), # Select the full range by default
+        timeFormat="%Y-%m-%d",
+        ticks = F,
         dragRange = TRUE, # Allow selection of a range
-        hide_min_max = FALSE, 
-        animate = FALSE 
     ),
     selectInput(
         "crimeType", 
@@ -100,7 +100,7 @@ app_sidebar <- list(
 )
 
 ui <- bootstrapPage(
-    
+
     navbarPage(
         theme = bslib::bs_theme(version = 5, bootswatch = "journal"),
         title = "Phoenix Crime App",
@@ -112,26 +112,27 @@ ui <- bootstrapPage(
                      tags$head(includeCSS("styles.css")),
                      leafletOutput("spatial_heatmap", width="100%", height="100%"),
                      absolutePanel(id = "controls", class = "panel panel-default",
-                                   top = 75, left = 55, width = 250, fixed=TRUE,
+                                   top = 25, left = 55, width = 300, fixed=TRUE,
                                    draggable = TRUE, height = "auto",
                                    app_sidebar)
                  )
                  ),
 
 ### Nav_panel — Graphs
-tabPanel("Graphs",
-         div(
-             absolutePanel(id = "controls", class = "panel panel-default",
-                           top = 75, left = 55, width = 250, fixed=TRUE,
-                           draggable = TRUE, height = "auto",
-                           app_sidebar),
-             bslib::layout_columns(
-                 columnWidths = c(6, 6, 12),
-                 shinycssloaders::withSpinner(plotlyOutput("dayOfWeekHeatmap", height = "320px"), color = "#bf492f", color.background = "white"),
-                 shinycssloaders::withSpinner(plotlyOutput("crimeTypeComparison"), color = "#bf492f", color.background = "white"),
-                 shinycssloaders::withSpinner(plotlyOutput("crimeGraph"), color = "#bf492f", color.background = "white")
-             )
-         )
+        tabPanel("Graphs",
+                 sidebarLayout(
+                     sidebarPanel(app_sidebar,
+                                  width = 350),
+                     
+                     mainPanel(
+                     bslib::layout_columns(
+                         columnWidths = c(6, 6, 12),
+                         shinycssloaders::withSpinner(plotlyOutput("dayOfWeekHeatmap", height = "320px"), color = "#bf492f", color.background = "white"),
+                         shinycssloaders::withSpinner(plotlyOutput("crimeTypeComparison"), color = "#bf492f", color.background = "white"),
+                         shinycssloaders::withSpinner(plotlyOutput("crimeGraph"), color = "#bf492f", color.background = "white")
+                     )
+                 )
+        )
 )
 )
 )
@@ -159,6 +160,9 @@ server <- function(input, output, session) {
                 filter(year(occurred_on) %in% selectedYears)
         }
         
+        print(input$dateRange[1])
+        print(input$dateRange[2])
+        
         # Then, apply the existing date range and crime type filters
         data <- yearFilteredData %>%
             filter(occurred_on >= input$dateRange[1] &
@@ -171,16 +175,19 @@ server <- function(input, output, session) {
     observe({
         if("All" %in% input$yearSelect) {
             updateSliderInput(session, "dateRange",
-                              value = format(range(app_df$occurred_on, na.rm = TRUE), "%Y-%m-%d"))
+                              value = range(app_df$occurred_on, na.rm = TRUE))
         } else {
             years <- as.numeric(input$yearSelect)
             if(length(years) > 0 && !all(is.na(years))) {
                 startDate <- as.POSIXct(paste0(min(years), "-01-01"))
                 endDate <- as.POSIXct(paste0(max(years), "-12-31"))
+                print(startDate)
+                print(endDate)
                 updateSliderInput(session, "dateRange",
-                                  value = c(format(startDate, "%Y-%m-%d"), format(endDate, "%Y-%m-%d")))
+                                  value = c(startDate, endDate))
             }
         }
+    
     })
     
     observeEvent(input$crimeType, {
@@ -197,51 +204,72 @@ server <- function(input, output, session) {
             }
         }
     })
+    
+    ### Navpanel - Spatial Heatmap
+    output$spatial_heatmap <- renderLeaflet({
+        data <- filteredData()
+        
+        if (!is.null(data) && nrow(data) > 0) {
+            leaflet() %>%
+                addTiles() %>%
+                addPolygons(data = app_blockgroups_spatial,
+                            weight = .5, # Line weight
+                            color = "#444444", # Line color
+                            opacity = .2, # Line opacity
+                            fillOpacity = 0.2, # Fill opacity
+                            fillColor = "#444444") %>% 
+                addHeatmap(data = data, lng = ~long, lat = ~lat, intensity = ~1,
+                           blur = 20, max = 0.05, radius = 15, gradient = heat.colors(10))
+        } else {
+            leaflet() %>%
+                addTiles()
+        }
+    })
 
 # Yearly crime line graph
-#     output$crimeGraph <- renderPlotly({
-#         # Aggregate filtered data by month
-#         monthly_crime_data <- filteredData() %>%
-#             mutate(month = as.Date(format(occurred_on, "%Y-%m-01"))) %>% # Ensure 'month' is Date type for scale_x_date
-#             group_by(month) %>%
-#             summarise(crime_count = n(), .groups = 'drop') %>%
-#             arrange(month)
-# 
-#         date_range <- range(monthly_crime_data$month)
-#         years_spanned <- as.numeric(difftime(max(date_range), min(date_range), units = "days")) / 365.25
-# 
-#         # Decide date_breaks and date_labels based on the number of years spanned
-#         if(years_spanned <= 2) {
-#             date_breaks <- "1 month"
-#             date_labels <- "%b %Y"
-#         } else {
-#             date_breaks <- "6 months"
-#             date_labels <- "%b %Y"
-#         }
-# 
-#         date_breaks <- if(years_spanned <= 2) "1 month" else "6 months"
-#         date_labels <- "%b %Y"
-# 
-#         # Create the ggplot object as before
-#         p <- ggplot(monthly_crime_data, aes(x = month, y = crime_count)) +
-#             geom_line() +
-#             geom_point() +
-#             scale_x_date(date_breaks = date_breaks, date_labels = date_labels) +
-#             geom_vline(xintercept = as.numeric(seq(as.Date(paste0(year(min(monthly_crime_data$month)), "-01-01")),
-#                                                    as.Date(paste0(year(max(monthly_crime_data$month)), "-01-01")),
-#                                                    by = "1 year")),
-#                        linetype = "dashed",
-#                        color = "grey") +
-#             theme_minimal() +
-#             labs(title = "Total Crime") +
-#             xlab("Month") +
-#             ylab("Count") +
-#             theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
-#                   axis.text.y = element_text(size = 12),
-#                   axis.title = element_text(size = 14))
-# 
-#         ggplotly(p)
-# })
+    output$crimeGraph <- renderPlotly({
+        # Aggregate filtered data by month
+        monthly_crime_data <- filteredData() %>%
+            mutate(month = as.Date(format(occurred_on, "%Y-%m-01"))) %>% # Ensure 'month' is Date type for scale_x_date
+            group_by(month) %>%
+            summarise(crime_count = n(), .groups = 'drop') %>%
+            arrange(month)
+
+        date_range <- range(monthly_crime_data$month)
+        years_spanned <- as.numeric(difftime(max(date_range), min(date_range), units = "days")) / 365.25
+
+        # Decide date_breaks and date_labels based on the number of years spanned
+        if(years_spanned <= 2) {
+            date_breaks <- "1 month"
+            date_labels <- "%b %Y"
+        } else {
+            date_breaks <- "6 months"
+            date_labels <- "%b %Y"
+        }
+
+        date_breaks <- if(years_spanned <= 2) "1 month" else "6 months"
+        date_labels <- "%b %Y"
+
+        # Create the ggplot object as before
+        p <- ggplot(monthly_crime_data, aes(x = month, y = crime_count)) +
+            geom_line() +
+            geom_point() +
+            scale_x_date(date_breaks = date_breaks, date_labels = date_labels) +
+            geom_vline(xintercept = as.numeric(seq(as.Date(paste0(year(min(monthly_crime_data$month)), "-01-01")),
+                                                   as.Date(paste0(year(max(monthly_crime_data$month)), "-01-01")),
+                                                   by = "1 year")),
+                       linetype = "dashed",
+                       color = "grey") +
+            theme_minimal() +
+            labs(title = "Total Crime") +
+            xlab("Month") +
+            ylab("Count") +
+            theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+                  axis.text.y = element_text(size = 12),
+                  axis.title = element_text(size = 14))
+
+        ggplotly(p)
+})
     
 # Temporal heatmap - day of week and time of day
     output$dayOfWeekHeatmap <- renderPlotly({
@@ -272,59 +300,46 @@ server <- function(input, output, session) {
     
     
 # Crime type comparison stacked bar graph
-    # output$crimeTypeComparison <- renderPlotly({
-    #     crime_data <- filteredData() %>%
-    #         group_by(date = as.Date(occurred_on), ucr_crime_category) %>%
-    #         summarise(crime_count = n(), .groups = 'drop') %>%
-    #         ungroup() %>%
-    #         # Calculate average crime counts per category
-    #         group_by(ucr_crime_category) %>%
-    #         mutate(avg_crime_count = mean(crime_count)) %>%
-    #         ungroup() %>%
-    #         # Reorder ucr_crime_category based on avg_crime_count (to ensure ascending order from bottom)
-    #         mutate(ucr_crime_category = reorder(ucr_crime_category, avg_crime_count))
-    # 
-    #     # Determine the range of dates and calculate the span of years for dynamic x-axis labels
-    #     date_range <- range(crime_data$date)
-    #     years_spanned <- as.numeric(difftime(max(date_range), min(date_range), units = "days")) / 365.25
-    # 
-    #     # Decide date_breaks and date_labels based on the number of years spanned
-    #     date_breaks <- if(years_spanned <= 2) "1 month" else "6 months"
-    #     date_labels <- "%b %Y"
-    # 
-    #     p <- ggplot(crime_data, aes(x = date, y = crime_count, fill = ucr_crime_category)) +
-    #     geom_bar(stat = "identity", position = "stack") +
-    #     scale_fill_viridis(alpha = .8, discrete = TRUE,
-    #                        option = "rocket",
-    #                        end = .6) + # closer to 1 is more yellow
-    #     theme_minimal() +
-    #     labs(title = "Comparison by Category",  # Plot title
-    #          fill = "Category",  # Legend title
-    #          x = "Date",  # X-axis title
-    #          y = "Count") +  # Y-axis title
-    #     scale_x_date(date_breaks = date_breaks, date_labels = date_labels) +
-    #     theme(axis.title = element_text(size = 14),
-    #           axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
-    #           axis.text.y = element_text(size = 12),
-    #           legend.position = "right",
-    #           plot.title = element_text(hjust = 0))
-    #     ggplotly(p)
-    # })
-    
-### Navpanel - Spatial Heatmap
-    output$spatial_heatmap <- renderLeaflet({
-        data <- filteredData()
-        
-        if (!is.null(data) && nrow(data) > 0) {
-            leaflet() %>%
-                addTiles() %>%
-                addHeatmap(data = data, lng = ~long, lat = ~lat, intensity = ~1,
-                           blur = 20, max = 0.05, radius = 15, gradient = heat.colors(10))
-        } else {
-            leaflet() %>%
-                addTiles()
-        }
+    output$crimeTypeComparison <- renderPlotly({
+        crime_data <- filteredData() %>%
+            group_by(date = as.Date(occurred_on), ucr_crime_category) %>%
+            summarise(crime_count = n(), .groups = 'drop') %>%
+            ungroup() %>%
+            # Calculate average crime counts per category
+            group_by(ucr_crime_category) %>%
+            mutate(avg_crime_count = mean(crime_count)) %>%
+            ungroup() %>%
+            # Reorder ucr_crime_category based on avg_crime_count (to ensure ascending order from bottom)
+            mutate(ucr_crime_category = reorder(ucr_crime_category, avg_crime_count))
+
+        # Determine the range of dates and calculate the span of years for dynamic x-axis labels
+        date_range <- range(crime_data$date)
+        years_spanned <- as.numeric(difftime(max(date_range), min(date_range), units = "days")) / 365.25
+
+        # Decide date_breaks and date_labels based on the number of years spanned
+        date_breaks <- if(years_spanned <= 2) "1 month" else "6 months"
+        date_labels <- "%b %Y"
+
+        p <- ggplot(crime_data, aes(x = date, y = crime_count, fill = ucr_crime_category)) +
+        geom_bar(stat = "identity", position = "stack") +
+        scale_fill_viridis(alpha = .8, discrete = TRUE,
+                           option = "rocket",
+                           end = .6) + # closer to 1 is more yellow
+        theme_minimal() +
+        labs(title = "Comparison by Category",  # Plot title
+             fill = "Category",  # Legend title
+             x = "Date",  # X-axis title
+             y = "Count") +  # Y-axis title
+        scale_x_date(date_breaks = date_breaks, date_labels = date_labels) +
+        theme(axis.title = element_text(size = 14),
+              axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+              axis.text.y = element_text(size = 12),
+              legend.position = "right",
+              plot.title = element_text(hjust = 0))
+        ggplotly(p)
     })
+    
+
     
 }
 
