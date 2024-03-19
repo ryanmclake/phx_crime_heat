@@ -100,40 +100,39 @@ app_sidebar <- list(
 )
 
 ui <- bootstrapPage(
-
-    navbarPage(
-        theme = bslib::bs_theme(version = 5, bootswatch = "journal"),
+    page_navbar(
+        theme = bslib::bs_theme(version = 5, bootswatch = "united"),
         title = "Phoenix Crime App",
         nav_spacer(),
         
 ### Nav_panel — Map
-        tabPanel("Map",
+        nav_panel("Map",
+                 icon = icon("bar-chart"),
+                 # layout_sidebar(
+                 #     sidebar = sidebar(app_sidebar),
                  div(class="outer",
                      tags$head(includeCSS("styles.css")),
                      leafletOutput("spatial_heatmap", width="100%", height="100%"),
                      absolutePanel(id = "controls", class = "panel panel-default",
-                                   top = 25, left = 55, width = 300, fixed=TRUE,
+                                   top = 250, left = 55, width = 300, fixed=TRUE,
                                    draggable = TRUE, height = "auto",
                                    app_sidebar)
                  )
                  ),
 
 ### Nav_panel — Graphs
-        tabPanel("Graphs",
-                 sidebarLayout(
-                     sidebarPanel(app_sidebar,
-                                  width = 350),
-                     
-                     mainPanel(
-                     bslib::layout_columns(
-                         columnWidths = c(6, 6, 12),
-                         shinycssloaders::withSpinner(plotlyOutput("dayOfWeekHeatmap", height = "320px"), color = "#bf492f", color.background = "white"),
-                         shinycssloaders::withSpinner(plotlyOutput("crimeTypeComparison"), color = "#bf492f", color.background = "white"),
-                         shinycssloaders::withSpinner(plotlyOutput("crimeGraph"), color = "#bf492f", color.background = "white")
+        nav_panel("Graphs",
+                  layout_sidebar(
+                      sidebar = sidebar(id = "controls", class = "panel panel-default", app_sidebar),
+                 navset_card_underline(
+                     nav_panel("Temporal Heatmap", shinycssloaders::withSpinner(plotlyOutput("dayOfWeekHeatmap", height = "320px"), 
+                                                                                color = "#bf492f", color.background = "white")),
+                     nav_panel("Type Comparison", shinycssloaders::withSpinner(plotlyOutput("crimeTypeComparison"), 
+                                                                               color = "#bf492f", color.background = "white")),
+                     nav_panel("Total Crime", shinycssloaders::withSpinner(plotlyOutput("crimeGraph"), color = "#bf492f", color.background = "white"))
                      )
                  )
         )
-)
 )
 )
 
@@ -141,14 +140,6 @@ ui <- bootstrapPage(
 #### Server  ###########################
 # Update server logic
 server <- function(input, output, session) {
-    # Create a reactive expression that updates only when the update button is clicked
-    # filteredData <- eventReactive(input$update, {
-    #     data <- app_df %>%
-    #         filter(occurred_on >= input$dateRange[1] &
-    #                    occurred_on <= input$dateRange[2],
-    #                ucr_crime_category %in% input$crimeType)
-    #     data
-    # })
     
     filteredData <- eventReactive(input$update, {
         # First, handle the 'yearSelect' input to filter by years
@@ -211,7 +202,8 @@ server <- function(input, output, session) {
         
         if (!is.null(data) && nrow(data) > 0) {
             leaflet() %>%
-                addTiles() %>%
+                addTiles(group = "Default") %>%
+                addProviderTiles(providers$Esri.WorldStreetMap, group = "Esri") %>% 
                 addPolygons(data = app_blockgroups_spatial,
                             weight = .5, # Line weight
                             color = "#444444", # Line color
@@ -219,7 +211,10 @@ server <- function(input, output, session) {
                             fillOpacity = 0.2, # Fill opacity
                             fillColor = "#444444") %>% 
                 addHeatmap(data = data, lng = ~long, lat = ~lat, intensity = ~1,
-                           blur = 20, max = 0.05, radius = 15, gradient = heat.colors(10))
+                           blur = 20, max = 0.05, radius = 15, gradient = heat.colors(10)) %>% 
+                addLayersControl(baseGroups = c("Default", "Esri"),
+                                 #overlayGroups = c("Polygons"),
+                                 options = layersControlOptions(collapsed = T))
         } else {
             leaflet() %>%
                 addTiles()
