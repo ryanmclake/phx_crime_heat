@@ -232,7 +232,10 @@ ui <- bslib::page_navbar(
 ### Nav_panel — Map
         nav_panel("Map",
                  icon = icon("map"),
-                 leafletOutput("spatial_heatmap", width="100%", height="100%")
+                 navset_card_underline(
+                   nav_panel("Heatmap", leafletOutput("spatial_heatmap", width="100%", height="100%")),
+                   nav_panel("Incidents", leafletOutput("incident_map", width="100%", height="100%"))
+                 )
                  ),
 
 ### Nav_panel — Graphs
@@ -341,16 +344,39 @@ server <- function(input, output, session) {
                             opacity = .2, # Line opacity
                             fillOpacity = 0.2, # Fill opacity
                             fillColor = "#444444", group = "Phoenix PD Jurisdiction") %>%
-                addHeatmap(data = data, lng = ~long, lat = ~lat, intensity = ~1,
-                           blur = 20, max = 0.05, radius = 15, gradient = heat.colors(10), group = "Heatmap") %>%
-                addCircleMarkers(lng = ~long, lat = ~lat, radius = 5, color = "#333333", stroke = FALSE, fillOpacity = 0.8, group = "Incidents") %>%
+                addHeatmap(data = data, lng = ~long, lat = ~lat, intensity = ~.1,
+                           blur = 15, max = .6, radius = 10, group = "Heatmap") %>%
                 addLayersControl(baseGroups = c("Default", "Esri"),
-                                 overlayGroups = c("Heatmap", "Incidents", "Phoenix PD Jurisdiction"),
+                                 overlayGroups = c("Heatmap", "Phoenix PD Jurisdiction"),
                                  options = layersControlOptions(collapsed = TRUE))
         } else {
             leaflet() %>%
                 addTiles()
         }
+    })
+    
+    output$incident_map <- renderLeaflet({
+      data <- filteredData()
+      
+      if (!is.null(data) && nrow(data) > 0) {
+        leaflet(data) %>%
+          addTiles(group = "Default") %>%
+          addProviderTiles(providers$Esri.WorldStreetMap, group = "Esri") %>% 
+          addPolygons(data = app_blockgroups_spatial,
+                      weight = .5, # Line weight
+                      color = "#444444", # Line color
+                      opacity = .2, # Line opacity
+                      fillOpacity = 0.2, # Fill opacity
+                      fillColor = "#444444", group = "Phoenix PD Jurisdiction") %>%
+          addCircleMarkers(lng = ~long, lat = ~lat, radius = 5, color = data$ucr_crime_category, 
+                           stroke = FALSE, fillOpacity = 0.7, group = "Incidents") %>%
+          addLayersControl(baseGroups = c("Default", "Esri"),
+                           overlayGroups = c("Incidents", "Phoenix PD Jurisdiction"),
+                           options = layersControlOptions(collapsed = TRUE))
+      } else {
+        leaflet() %>%
+          addTiles()
+      }
     })
 
 # Yearly crime line graph
