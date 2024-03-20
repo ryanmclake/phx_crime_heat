@@ -49,7 +49,59 @@ app_df <- raw_df %>%
     left_join(geo_df, by = c("block_addr_100", "zip")) %>%
     filter(!is.na(lat),!is.na(long)) %>% 
     # filter for now until performance is optimized
-    slice_sample(n=1000, replace = F)
+    slice_sample(n=10000, replace = F)
+
+app_df <- app_df %>%
+    mutate(premise_category = case_when(
+        str_detect(premise_type, "OFFICE|COMMERCIAL|RENTAL STORAGE|FACILITY|WAREHOUSE|FACTORY|PARKING GARAGE") | str_detect(premise_type, "STOREROOM/SHED \\(COMMERCIAL\\)") ~ "Other Commercial",
+        
+        str_detect(premise_type, "SINGLE FAMILY HOUSING|HOUSE|APARTMENT|MOBILE|CONDO|TOWNHOUSE|GARAGE|CARPORT|DRIVEWAY|FENCED RESIDENTIAL YARD|GROUP HOME|HOTEL|MOTEL") | str_detect(premise_type, "STOREROOM/SHED \\(RESIDENTIAL\\)") ~ "Residential",
+        
+        str_detect(premise_type, "GOVERNMENT|PUBLIC|SCHOOL|HOSPITAL|LIGHT RAIL FACILITY|MEDICAL|CHILD CARE|DAY CARE|CHURCH|SYNAGOGUE|TEMPLE|MOSQUE|AIRPORT|COMMUNITY CENTER|NURSING CARE") ~ "Public & Institutional",
+        
+        str_detect(premise_type, "MARKET|STORE|DEPARTMENT|DISCOUNT|RETAIL|FAST FOOD|GAS|GROCERY|SUPER MARKET|BANK|SAVINGS|CREDIT UNION|RESTAURANT|DRUG|SHOPPING MALL|THEATRE|BAR|LOUNGE|NIGHT CLUB|ADULT ONLY|MOVIE") ~ "Commercial & Retail",
+        
+        str_detect(premise_type, "PARK|PLAYGROUND|PARKING LOT|STREET|ROADWAY|SIDEWALK|ALLEY|CONSTRUCTION|OPEN SPACE|DESERT|FIELD|WOODS|FENCED YARD|PARKING GARAGE") ~ "Outdoor & Recreational",
+        
+        str_detect(premise_type, "VEHICLE|BUS STOP|LIGHT RAIL|TRAIN|BUS|FACILITY") ~ "Transport & Utilities",
+        
+        str_detect(premise_type, "UNKNOWN|OTHER|ABANDONED|CONDEMNED") ~ "Miscellaneous",
+        TRUE ~ "Miscellaneous" # Catch-all for anything not matched
+    ))
+
+
+
+app_df %>%
+    group_by(premise_category) %>%
+    summarise(count = n()) %>%
+    ggplot(aes(x = reorder(premise_category, -count), y = count, fill = premise_category)) +
+    geom_bar(stat = "identity") +
+    theme_minimal() +
+    labs(title = "Crime Count by Category", x = "Category", y = "Count") +
+    coord_flip() # For better label readability
+
+res_comm_df <- app_df %>%
+  #  filter(premise_category %in% c("Other Commercial", "Commercial & Retail"))
+    #filter(premise_category %in% c("Other Commercial"))
+    filter(premise_category %in% c("Residential"))
+
+
+res_comm_df %>%
+    group_by(premise_category, premise_type) %>%
+    summarise(count = n()) %>%
+    ggplot(aes(x = reorder(premise_category, -count), y = count, fill = premise_type)) +
+    geom_bar(stat = "identity") +
+    theme_minimal() +
+    labs(title = "Crime Type Distribution within Each Category", x = "Category", y = "Count") +
+    facet_wrap(~premise_category, scales = "free_y") # Separate plots for each category
+
+res_comm_df %>%
+    filter(premise_category == "Residential") %>%
+    ggplot(aes(x = premise_type, fill = premise_type)) +
+    geom_bar() +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    labs(title = "Distribution of Premise Types", x = "Premise Type", y = "Count")
 
 # temp <- sf::st_read(df_complete_path)
  app_blockgroups_spatial <- sf::st_read(blockgroups_geom_path)
@@ -73,14 +125,14 @@ app_df <- raw_df %>%
 app_sidebar <- list(
     selectInput(
         "yearSelect",
-        "Select by Year or Specific Dates",
+        "Select by year or specific dates",
         choices = c("All", as.character(2015:2023)),
         selected = "All",
         multiple = TRUE
     ),
     sliderInput(
         inputId = "dateRange",
-        label = "Select Date Range",
+        label = "Select date range",
         min = as.Date(min(app_df$occurred_on), "%Y-%m-%d"),
         max = as.Date(max(app_df$occurred_on), "%Y-%m-%d"),
         value = as.Date(range(app_df$occurred_on, na.rm = TRUE), "%Y-%m-%d"), # Select the full range by default
@@ -95,35 +147,48 @@ app_sidebar <- list(
         selected = "All", 
         multiple = TRUE
     ),
+    selectInput(
+        "premiseType", 
+        "Premise Type",
+        choices = c("All", unique(app_df$premise_category)),
+        selected = "All", 
+        multiple = TRUE
+    ),
     actionButton("reset", "Reset"),
     actionButton("update", "Update")
 )
 
-ui <- bootstrapPage(
-    page_navbar(
-        theme = bslib::bs_theme(version = 5, bootswatch = "united"),
+ui <- bslib::page_navbar(
+        theme = bslib::bs_theme(version = 5, 
+                                primary = "#bf492f", 
+                                font_scale = NULL,
+                                base_font = font_google("Work Sans"),
+                                heading_font = font_google("Cantarell"),
+                                preset = "superhero"),
         title = "Phoenix Crime App",
         nav_spacer(),
+        sidebar = sidebar(app_sidebar, width = 300),
         
 ### Nav_panel — Map
         nav_panel("Map",
-                 icon = icon("bar-chart"),
-                 # layout_sidebar(
-                 #     sidebar = sidebar(app_sidebar),
-                 div(class="outer",
-                     tags$head(includeCSS("styles.css")),
-                     leafletOutput("spatial_heatmap", width="100%", height="100%"),
-                     absolutePanel(id = "controls", class = "panel panel-default",
-                                   top = 250, left = 55, width = 300, fixed=TRUE,
-                                   draggable = TRUE, height = "auto",
-                                   app_sidebar)
-                 )
+                 icon = icon("map"),
+                 leafletOutput("spatial_heatmap", width="100%", height="100%")
                  ),
+
+# layout_sidebar(
+#     sidebar = sidebar(app_sidebar),
+# div(class="outer",
+#     tags$head(includeCSS("styles.css")),
+#     leafletOutput("spatial_heatmap", width="100%", height="100%"),
+#     absolutePanel(id = "controls", class = "panel panel-default",
+#                   top = 250, left = 55, width = 300, fixed=TRUE,
+#                   draggable = TRUE, height = "auto",
+#                   app_sidebar)
+# )
 
 ### Nav_panel — Graphs
         nav_panel("Graphs",
-                  layout_sidebar(
-                      sidebar = sidebar(id = "controls", class = "panel panel-default", app_sidebar),
+                 icon = icon("bar-chart"),
                  navset_card_underline(
                      nav_panel("Temporal Heatmap", shinycssloaders::withSpinner(plotlyOutput("dayOfWeekHeatmap", height = "320px"), 
                                                                                 color = "#bf492f", color.background = "white")),
@@ -133,14 +198,13 @@ ui <- bootstrapPage(
                      )
                  )
         )
-)
-)
+
 
 
 #### Server  ###########################
 # Update server logic
 server <- function(input, output, session) {
-    
+
     filteredData <- eventReactive(input$update, {
         # First, handle the 'yearSelect' input to filter by years
         if ("All" %in% input$yearSelect) {
@@ -158,8 +222,10 @@ server <- function(input, output, session) {
         data <- yearFilteredData %>%
             filter(occurred_on >= input$dateRange[1] &
                        occurred_on <= input$dateRange[2],
-                   ucr_crime_category %in% input$crimeType)
+                   ucr_crime_category %in% input$crimeType,
+                   premise_category %in% input$premiseType)
         data
+        print(head(data))
     })
     
     # Automatically update the date slider when year selections change
@@ -172,8 +238,6 @@ server <- function(input, output, session) {
             if(length(years) > 0 && !all(is.na(years))) {
                 startDate <- as.POSIXct(paste0(min(years), "-01-01"))
                 endDate <- as.POSIXct(paste0(max(years), "-12-31"))
-                print(startDate)
-                print(endDate)
                 updateSliderInput(session, "dateRange",
                                   value = c(startDate, endDate))
             }
@@ -192,6 +256,21 @@ server <- function(input, output, session) {
                 # If "All" is selected along with other options but not last, deselect "All"
                 updateSelectInput(session, "crimeType", 
                                   selected = setdiff(input$crimeType, "All"))
+            }
+        }
+    })
+    
+    observeEvent(input$premiseType, {
+        # If "All" is selected, select all options
+        if ("All" %in% input$premiseType) {
+            # Check if "All" is the only option selected or if it was selected last
+            if (length(input$premiseType) == 1 || tail(input$premiseType, n = 1) == "All") {
+                updateSelectInput(session, "premiseType", 
+                                  selected = c("All", unique(app_df$premise_category)))
+            } else {
+                # If "All" is selected along with other options but not last, deselect "All"
+                updateSelectInput(session, "premiseType", 
+                                  selected = setdiff(input$premiseType, "All"))
             }
         }
     })
