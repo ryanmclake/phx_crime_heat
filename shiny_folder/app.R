@@ -223,7 +223,7 @@ ui <- bslib::page_navbar(
                                 primary = "#bf492f", 
                                 font_scale = NULL,
                                 base_font = font_google("Work Sans"),
-                                heading_font = font_google("Cantarell"),
+                                heading_font = font_google("Work Sans"),
                                 preset = "superhero"),
         title = "Phoenix Crime App",
         nav_spacer(),
