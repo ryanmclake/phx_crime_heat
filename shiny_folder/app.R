@@ -14,6 +14,7 @@ library(ggplot2)
 library(plotly)
 library(viridis)
 library(hrbrthemes)
+library(RColorBrewer)
 # shiny stuff
 library(shiny)
 if(!require(shinyWidgets)) install.packages("shinyWidgets", repos = "http://cran.us.r-project.org")
@@ -69,39 +70,88 @@ app_df <- app_df %>%
         TRUE ~ "Miscellaneous" # Catch-all for anything not matched
     ))
 
-
-
-app_df %>%
-    group_by(premise_category) %>%
-    summarise(count = n()) %>%
-    ggplot(aes(x = reorder(premise_category, -count), y = count, fill = premise_category)) +
-    geom_bar(stat = "identity") +
-    theme_minimal() +
-    labs(title = "Crime Count by Category", x = "Category", y = "Count") +
-    coord_flip() # For better label readability
-
-res_comm_df <- app_df %>%
-  #  filter(premise_category %in% c("Other Commercial", "Commercial & Retail"))
-    #filter(premise_category %in% c("Other Commercial"))
-    filter(premise_category %in% c("Residential"))
-
-
-res_comm_df %>%
-    group_by(premise_category, premise_type) %>%
-    summarise(count = n()) %>%
-    ggplot(aes(x = reorder(premise_category, -count), y = count, fill = premise_type)) +
-    geom_bar(stat = "identity") +
-    theme_minimal() +
-    labs(title = "Crime Type Distribution within Each Category", x = "Category", y = "Count") +
-    facet_wrap(~premise_category, scales = "free_y") # Separate plots for each category
-
-res_comm_df %>%
-    filter(premise_category == "Residential") %>%
-    ggplot(aes(x = premise_type, fill = premise_type)) +
-    geom_bar() +
-    theme_minimal() +
-    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
-    labs(title = "Distribution of Premise Types", x = "Premise Type", y = "Count")
+# app_df %>%
+#     group_by(premise_category) %>%
+#     summarise(count = n()) %>%
+#     ggplot(aes(x = reorder(premise_category, -count), y = count, fill = premise_category)) +
+#     geom_bar(stat = "identity") +
+#     theme_minimal() +
+#     labs(title = "Crime Count by Category", x = "Category", y = "Count") +
+#     coord_flip() # For better label readability
+# 
+# average_counts <- app_df %>%
+#     group_by(ucr_crime_category) %>%
+#     summarise(average_count = mean(count)) %>%
+#     arrange(desc(average_count)) %>%
+#     mutate(ucr_crime_category = factor(ucr_crime_category, levels = ucr_crime_category))
+# 
+# # Merge average counts with original data to order crime categories
+# app_df <- app_df %>%
+#     left_join(average_counts, by = "ucr_crime_category") %>%
+#     mutate(premise_category = factor(premise_category, levels = unique(premise_category)))
+# 
+# # Updated plot
+# app_df %>%
+#     group_by(premise_category, ucr_crime_category) %>%
+#     summarise(count = n(), .groups = 'drop') %>%
+#     ggplot(aes(x = premise_category, y = count, fill = ucr_crime_category)) +
+#     geom_bar(stat = "identity") +
+#     theme_minimal() +
+#     labs(title = "Crime Type Distribution within Each Category", x = "Category", y = "Count") +
+#     facet_wrap(~premise_category, scales = "free_y") +
+#     scale_fill_manual(values = rev(RColorBrewer::brewer.pal(n = length(unique(app_df$ucr_crime_category)), name = "Set3"))) +
+#     theme(axis.text.x = element_text(angle = 45, hjust = 1))
+# 
+# app_df %>%
+#     group_by(premise_category, ucr_crime_category) %>%
+#     summarise(count = n(), .groups = 'drop') %>%
+#     mutate(total_count = sum(count), .by = "premise_category") %>%
+#     mutate(premise_category = factor(premise_category, levels = unique(premise_category[order(-total_count)]))) %>%
+#     mutate(avg_count = ave(count, ucr_crime_category, FUN = mean)) %>%
+#     mutate(ucr_crime_category = factor(ucr_crime_category, levels = unique(ucr_crime_category[order(avg_count)]))) %>%
+#     # Plot
+#     ggplot(aes(x = premise_category, y = count, fill = ucr_crime_category)) +
+#     geom_bar(stat = "identity", position = "stack") +
+#     theme_minimal() +
+#     labs(title = "Crime Type Distribution across Location Categories",
+#          x = "Location Category",
+#          y = "Count",
+#          fill = "Crime Category") +  # Updated legend title
+#     scale_fill_brewer(palette = "Set3") +
+#     theme(axis.text.x = element_text(angle = 45, hjust = 1))
+# 
+# app_df %>%
+#     mutate(year = lubridate::year(occurred_on), month = lubridate::month(occurred_on, label = TRUE)) %>%
+#     group_by(premise_category, year, month) %>%
+#     summarise(count = n()) %>%
+#     ggplot(aes(x = month, y = count, color = premise_category)) +
+#     geom_line() +
+#     facet_wrap(~year, scales = "free_y") +
+#     theme_minimal() +
+#     labs(title = "Monthly Crime Trends by Category", x = "Month", y = "Count")
+# 
+# res_comm_df <- app_df %>%
+#   #  filter(premise_category %in% c("Other Commercial", "Commercial & Retail"))
+#     #filter(premise_category %in% c("Other Commercial"))
+#     filter(premise_category %in% c("Residential"))
+# 
+# 
+# res_comm_df %>%
+#     group_by(premise_category, premise_type) %>%
+#     summarise(count = n()) %>%
+#     ggplot(aes(x = reorder(premise_category, -count), y = count, fill = premise_type)) +
+#     geom_bar(stat = "identity") +
+#     theme_minimal() +
+#     labs(title = "Crime Type Distribution within Each Category", x = "Category", y = "Count") +
+#     facet_wrap(~premise_category, scales = "free_y") # Separate plots for each category
+# 
+# res_comm_df %>%
+#     filter(premise_category == "Residential") %>%
+#     ggplot(aes(x = premise_type, fill = premise_type)) +
+#     geom_bar() +
+#     theme_minimal() +
+#     theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+#     labs(title = "Distribution of Premise Types", x = "Premise Type", y = "Count")
 
 # temp <- sf::st_read(df_complete_path)
  app_blockgroups_spatial <- sf::st_read(blockgroups_geom_path)
@@ -123,16 +173,23 @@ res_comm_df %>%
 #### UI ###########################
 
 app_sidebar <- list(
+    tags$head(
+        tags$script(HTML("
+      $(document).on('shiny:sessioninitialized', function(event) {
+        $('.collapse').collapse('hide');
+      });
+    "))
+    ),
     selectInput(
         "yearSelect",
-        "Select by year or specific dates",
+        "Select By Year Or Specific Dates",
         choices = c("All", as.character(2015:2023)),
         selected = "All",
         multiple = TRUE
     ),
     sliderInput(
         inputId = "dateRange",
-        label = "Select date range",
+        label = "",
         min = as.Date(min(app_df$occurred_on), "%Y-%m-%d"),
         max = as.Date(max(app_df$occurred_on), "%Y-%m-%d"),
         value = as.Date(range(app_df$occurred_on, na.rm = TRUE), "%Y-%m-%d"), # Select the full range by default
@@ -140,7 +197,10 @@ app_sidebar <- list(
         ticks = F,
         dragRange = TRUE, # Allow selection of a range
     ),
-    selectInput(
+    accordion(
+        accordion_panel(
+            "Crime & Location Category",
+        selectInput(
         "crimeType", 
         "Crime",
         choices = c("All", unique(app_df$ucr_crime_category)),
@@ -153,7 +213,7 @@ app_sidebar <- list(
         choices = c("All", unique(app_df$premise_category)),
         selected = "All", 
         multiple = TRUE
-    ),
+    ))),
     actionButton("reset", "Reset"),
     actionButton("update", "Update")
 )
@@ -175,26 +235,16 @@ ui <- bslib::page_navbar(
                  leafletOutput("spatial_heatmap", width="100%", height="100%")
                  ),
 
-# layout_sidebar(
-#     sidebar = sidebar(app_sidebar),
-# div(class="outer",
-#     tags$head(includeCSS("styles.css")),
-#     leafletOutput("spatial_heatmap", width="100%", height="100%"),
-#     absolutePanel(id = "controls", class = "panel panel-default",
-#                   top = 250, left = 55, width = 300, fixed=TRUE,
-#                   draggable = TRUE, height = "auto",
-#                   app_sidebar)
-# )
-
 ### Nav_panel — Graphs
         nav_panel("Graphs",
                  icon = icon("bar-chart"),
                  navset_card_underline(
-                     nav_panel("Temporal Heatmap", shinycssloaders::withSpinner(plotlyOutput("dayOfWeekHeatmap", height = "320px"), 
+                     nav_panel("Temporal Heatmap", shinycssloaders::withSpinner(plotlyOutput("dayOfWeekHeatmap"), 
                                                                                 color = "#bf492f", color.background = "white")),
                      nav_panel("Type Comparison", shinycssloaders::withSpinner(plotlyOutput("crimeTypeComparison"), 
                                                                                color = "#bf492f", color.background = "white")),
-                     nav_panel("Total Crime", shinycssloaders::withSpinner(plotlyOutput("crimeGraph"), color = "#bf492f", color.background = "white"))
+                     nav_panel("Total Crime", shinycssloaders::withSpinner(plotlyOutput("crimeGraph"), color = "#bf492f", color.background = "white")),
+                     nav_panel("Location Comparison", shinycssloaders::withSpinner(plotlyOutput("location_comparison"), color = "#bf492f", color.background = "white"))
                      )
                  )
         )
@@ -215,8 +265,8 @@ server <- function(input, output, session) {
                 filter(year(occurred_on) %in% selectedYears)
         }
         
-        print(input$dateRange[1])
-        print(input$dateRange[2])
+        #print(input$dateRange[1])
+        #print(input$dateRange[2])
         
         # Then, apply the existing date range and crime type filters
         data <- yearFilteredData %>%
@@ -225,7 +275,9 @@ server <- function(input, output, session) {
                    ucr_crime_category %in% input$crimeType,
                    premise_category %in% input$premiseType)
         data
-        print(head(data))
+        #print(head(data))
+        #print("unique crime types")
+        #print(unique(data$ucr_crime_category))
     })
     
     # Automatically update the date slider when year selections change
@@ -280,7 +332,7 @@ server <- function(input, output, session) {
         data <- filteredData()
         
         if (!is.null(data) && nrow(data) > 0) {
-            leaflet() %>%
+            leaflet(data) %>%
                 addTiles(group = "Default") %>%
                 addProviderTiles(providers$Esri.WorldStreetMap, group = "Esri") %>% 
                 addPolygons(data = app_blockgroups_spatial,
@@ -288,12 +340,13 @@ server <- function(input, output, session) {
                             color = "#444444", # Line color
                             opacity = .2, # Line opacity
                             fillOpacity = 0.2, # Fill opacity
-                            fillColor = "#444444") %>% 
+                            fillColor = "#444444", group = "Phoenix PD Jurisdiction") %>%
                 addHeatmap(data = data, lng = ~long, lat = ~lat, intensity = ~1,
-                           blur = 20, max = 0.05, radius = 15, gradient = heat.colors(10)) %>% 
+                           blur = 20, max = 0.05, radius = 15, gradient = heat.colors(10), group = "Heatmap") %>%
+                addCircleMarkers(lng = ~long, lat = ~lat, radius = 5, color = "#333333", stroke = FALSE, fillOpacity = 0.8, group = "Incidents") %>%
                 addLayersControl(baseGroups = c("Default", "Esri"),
-                                 #overlayGroups = c("Polygons"),
-                                 options = layersControlOptions(collapsed = T))
+                                 overlayGroups = c("Heatmap", "Incidents", "Phoenix PD Jurisdiction"),
+                                 options = layersControlOptions(collapsed = TRUE))
         } else {
             leaflet() %>%
                 addTiles()
@@ -360,9 +413,9 @@ server <- function(input, output, session) {
                       hourLabel = first(hourLabel),
                       .groups = 'drop')
 
-        data$dayOfWeek <- factor(data$dayOfWeek, levels = c("Mon", "Tue", "Wed", "Thurs", "Fri", "Sat", "Sun"))
+        data$dayOfWeek <- factor(data$dayOfWeek, levels = c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"))
         data$hourOfDay <- factor(data$hourLabel, levels = c("12 AM", paste(1:11, "AM"), "12 PM", paste(1:11, "PM")), ordered = TRUE)
-
+        
         p <- plot_ly(data, x = ~dayOfWeek, y = ~hourOfDay, z = ~crimeCount, type = "heatmap", colors = "Reds",
                      colorbar = list(title = "Count")) %>%
             layout(title = "Comparison by Day and Hour",
@@ -396,9 +449,11 @@ server <- function(input, output, session) {
 
         p <- ggplot(crime_data, aes(x = date, y = crime_count, fill = ucr_crime_category)) +
         geom_bar(stat = "identity", position = "stack") +
-        scale_fill_viridis(alpha = .8, discrete = TRUE,
-                           option = "rocket",
-                           end = .6) + # closer to 1 is more yellow
+        scale_fill_brewer(palette = "Set3") +
+            
+        # scale_fill_viridis(alpha = .8, discrete = TRUE,
+        #                    option = "rocket",
+        #                    end = .6) + # closer to 1 is more yellow
         theme_minimal() +
         labs(title = "Comparison by Category",  # Plot title
              fill = "Category",  # Legend title
@@ -411,6 +466,27 @@ server <- function(input, output, session) {
               legend.position = "right",
               plot.title = element_text(hjust = 0))
         ggplotly(p)
+    })
+    
+    
+    output$location_comparison <- renderPlotly({
+        data <- filteredData() %>%
+            group_by(premise_category, ucr_crime_category) %>%
+            summarise(count = n(), .groups = 'drop') %>%
+            mutate(total_count = sum(count), .by = "premise_category") %>%
+            mutate(premise_category = factor(premise_category, levels = unique(premise_category[order(-total_count)]))) %>%
+            mutate(avg_count = ave(count, ucr_crime_category, FUN = mean)) %>%
+            mutate(ucr_crime_category = factor(ucr_crime_category, levels = unique(ucr_crime_category[order(avg_count)])))
+        
+        gg <- ggplot(data, aes(x = premise_category, y = count, fill = ucr_crime_category)) +
+            geom_bar(stat = "identity", position = "stack") +
+            theme_minimal() +
+            labs(title = "Crime Type Distribution across Location Categories",
+                 x = "Location Category", y = "Count", fill = "Crime Category") +
+            scale_fill_brewer(palette = "Set3") +
+            theme(axis.text.x = element_text(angle = 45, hjust = 1))
+        
+        ggplotly(gg)
     })
     
 
