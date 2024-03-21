@@ -274,9 +274,9 @@ data_prep_aggregated <- recipe(ucr_crime_category ~ ., data = app_df_aggregated)
   prep(training = app_df_aggregated, retain = TRUE)
 
 prepared_data_aggregated <- bake(data_prep_aggregated, app_df_aggregated)
-prepared_data_aggregated <- prepared_data_aggregated[order(prepared_data_aggregated$occurred_on), ] #respect chronological order
-prepared_data_aggregated <- prepared_data_aggregated %>% 
-  select(-occurred_on)
+# prepared_data_aggregated <- prepared_data_aggregated[order(prepared_data_aggregated$occurred_on), ] #respect chronological order
+# prepared_data_aggregated <- prepared_data_aggregated %>% 
+#   select(-occurred_on)
 
 set.seed(3212024) # for reproducibility
 training_indices <- createDataPartition(prepared_data_aggregated$ucr_crime_category, p = 0.8, list = FALSE)
@@ -292,16 +292,24 @@ rf_model_aggregated <- ranger(
 )
 
 zip_code_for_prediction = 85015
-
 today_date <- Sys.Date()
-occurred_on <- as.Date(format(today_date %m+% months(1), "%Y-%m-01")) # This ensures we are looking at exactly a month ahead, and setting to the first of the month for consistency
+prediction_occurred_on <- as.Date(format(today_date %m+% months(1), "%Y-%m-01")) # This ensures we are looking at exactly a month ahead, and setting to the first of the month for consistency
 
 
 prediction_data_aggregated <- zip_level_data %>%
   filter(zip == as.character(zip_code_for_prediction)) %>%
-  mutate(occurred_on = occurred_on) # Add these columns
+  mutate(occurred_on = prediction_occurred_on) # Add these columns
 
 prepared_prediction_data <- bake(data_prep_aggregated, new_data = prediction_data_aggregated)
 predictions <- predict(rf_model_aggregated, prepared_prediction_data)$predictions
 
+###
+prediction_data_aggregated <- monthly_crimes %>%
+  filter(zip == as.character(zip_code_for_prediction)) %>%
+  mutate(occurred_on = prediction_occurred_on) # Add these columns
+
+prepared_prediction_data <- bake(data_prep_regression, new_data = prediction_data_aggregated)
+
+rf_regression_predictions <- predict(rf_regression_model, prepared_prediction_data)$predictions
+rf_regression_predictions
 
