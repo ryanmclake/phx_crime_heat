@@ -380,49 +380,102 @@ server <- function(input, output, session) {
     })
 
 # Yearly crime line graph
+#     output$crimeGraph <- renderPlotly({
+#         # Aggregate filtered data by month
+#         monthly_crime_data <- filteredData() %>%
+#             mutate(month = as.Date(format(occurred_on, "%Y-%m-01"))) %>% # Ensure 'month' is Date type for scale_x_date
+#             group_by(month) %>%
+#             summarise(crime_count = n(), .groups = 'drop') %>%
+#             arrange(month)
+# 
+#         date_range <- range(monthly_crime_data$month)
+#         years_spanned <- as.numeric(difftime(max(date_range), min(date_range), units = "days")) / 365.25
+# 
+#         # Decide date_breaks and date_labels based on the number of years spanned
+#         if(years_spanned <= 2) {
+#             date_breaks <- "1 month"
+#             date_labels <- "%b %Y"
+#         } else {
+#             date_breaks <- "6 months"
+#             date_labels <- "%b %Y"
+#         }
+# 
+#         date_breaks <- if(years_spanned <= 2) "1 month" else "6 months"
+#         date_labels <- "%b %Y"
+# 
+#         # Create the ggplot object as before
+#         p <- ggplot(monthly_crime_data, aes(x = month, y = crime_count)) +
+#             geom_line() +
+#             geom_point() +
+#             scale_x_date(date_breaks = date_breaks, date_labels = date_labels) +
+#             geom_vline(xintercept = as.numeric(seq(as.Date(paste0(year(min(monthly_crime_data$month)), "-01-01")),
+#                                                    as.Date(paste0(year(max(monthly_crime_data$month)), "-01-01")),
+#                                                    by = "1 year")),
+#                        linetype = "dashed",
+#                        color = "grey") +
+#             theme_minimal() +
+#             labs(title = "Total Crime") +
+#             xlab("Month") +
+#             ylab("Count") +
+#             theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+#                   axis.text.y = element_text(size = 12),
+#                   axis.title = element_text(size = 14))
+# 
+#         ggplotly(p)
+# })
+    
     output$crimeGraph <- renderPlotly({
-        # Aggregate filtered data by month
-        monthly_crime_data <- filteredData() %>%
-            mutate(month = as.Date(format(occurred_on, "%Y-%m-01"))) %>% # Ensure 'month' is Date type for scale_x_date
-            group_by(month) %>%
-            summarise(crime_count = n(), .groups = 'drop') %>%
-            arrange(month)
+      # Aggregate filtered data by month and crime type, including "Total"
+      monthly_crime_type_data <- filteredData() %>%
+        mutate(month = as.Date(format(occurred_on, "%Y-%m-01"))) %>%
+        group_by(month, ucr_crime_category) %>%
+        summarise(crime_count = n(), .groups = 'drop') %>%
+        arrange(month, ucr_crime_category)
+      
+      # Adding "Total" counts by month
+      total_monthly_data <- filteredData() %>%
+        mutate(month = as.Date(format(occurred_on, "%Y-%m-01"))) %>%
+        group_by(month) %>%
+        summarise(crime_count = n(), ucr_crime_category = "Total", .groups = 'drop') %>%
+        arrange(month)
+      
+      combined_data <- bind_rows(monthly_crime_type_data, total_monthly_data)
+      
+      # Determine date range and formatting based on data span
+      date_range <- range(combined_data$month)
+      years_spanned <- as.numeric(difftime(max(date_range), min(date_range), units = "days")) / 365.25
+      date_breaks <- if(years_spanned <= 2) "1 month" else "6 months"
+      date_labels <- "%b %Y"
+      
+      # Determine the unique crime types in your dataset
+      crime_types <- unique(combined_data$ucr_crime_category)
 
-        date_range <- range(monthly_crime_data$month)
-        years_spanned <- as.numeric(difftime(max(date_range), min(date_range), units = "days")) / 365.25
-
-        # Decide date_breaks and date_labels based on the number of years spanned
-        if(years_spanned <= 2) {
-            date_breaks <- "1 month"
-            date_labels <- "%b %Y"
-        } else {
-            date_breaks <- "6 months"
-            date_labels <- "%b %Y"
-        }
-
-        date_breaks <- if(years_spanned <= 2) "1 month" else "6 months"
-        date_labels <- "%b %Y"
-
-        # Create the ggplot object as before
-        p <- ggplot(monthly_crime_data, aes(x = month, y = crime_count)) +
-            geom_line() +
-            geom_point() +
-            scale_x_date(date_breaks = date_breaks, date_labels = date_labels) +
-            geom_vline(xintercept = as.numeric(seq(as.Date(paste0(year(min(monthly_crime_data$month)), "-01-01")),
-                                                   as.Date(paste0(year(max(monthly_crime_data$month)), "-01-01")),
-                                                   by = "1 year")),
-                       linetype = "dashed",
-                       color = "grey") +
-            theme_minimal() +
-            labs(title = "Total Crime") +
-            xlab("Month") +
-            ylab("Count") +
-            theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
-                  axis.text.y = element_text(size = 12),
-                  axis.title = element_text(size = 14))
-
-        ggplotly(p)
-})
+      colors <- setNames(brewer.pal(min(length(crime_types), 11), "Set3"), crime_types[crime_types != "Total"])
+      colors["Total"] <- "black"
+      
+      # Create the plot
+      p <- ggplot(combined_data, aes(x = month, y = crime_count, color = ucr_crime_category)) +
+        geom_line() +
+        geom_point() +
+        scale_x_date(date_breaks = date_breaks, date_labels = date_labels) +
+        geom_vline(xintercept = as.numeric(seq(as.Date(paste0(year(min(combined_data$month)), "-01-01")),
+                                               as.Date(paste0(year(max(combined_data$month)), "-01-01")),
+                                               by = "1 year")),
+                   linetype = "dashed",
+                   color = "grey") +
+        theme_minimal() +
+        labs(title = "Crime by Type Over Time", color = "Crime Type") +
+        xlab("Month") +
+        ylab("Count") +
+        scale_color_manual(values = colors) +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+              axis.text.y = element_text(size = 12),
+              axis.title = element_text(size = 14),
+              legend.position = "bottom")
+      
+      # Convert to plotly for interactivity
+      ggplotly(p, tooltip = c("x", "y", "color"))
+    })
     
 # Temporal heatmap - day of week and time of day
     output$dayOfWeekHeatmap <- renderPlotly({
