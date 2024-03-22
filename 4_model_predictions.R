@@ -192,69 +192,109 @@ app_df <- app_df %>%
     TRUE ~ "Miscellaneous" # Catch-all for anything not matched
   ))
 
-monthly_crimes <- app_df %>%
-  mutate(month = floor_date(occurred_on, unit="month"), year = year(occurred_on)) %>%
-  group_by(zip, year, month) %>%
+app_df <- app_df %>%
+  mutate(premise_category = as.factor(premise_category),
+         zip = as.factor(zip),
+         ucr_crime_category = as.factor(ucr_crime_category))
+
+
+# monthly_crimes <- app_df %>%
+#   mutate(month = floor_date(occurred_on, unit="month"), year = year(occurred_on)) %>%
+#   group_by(zip, year, month) %>%
+#   summarise(total_crimes = n(), .groups = 'drop')
+daily_crimes <- app_df %>%
+  mutate(date = as.Date(occurred_on), year = year(occurred_on), month = month(occurred_on), day = day(occurred_on)) %>%
+  group_by(zip, year, month, day) %>%
   summarise(total_crimes = n(), .groups = 'drop')
 
 # Split data
 set.seed(123)
-data_split <- initial_split(monthly_crimes, prop = 0.8)
-train_data <- training(data_split)
-test_data <- testing(data_split)
+# data_split <- initial_split(monthly_crimes, prop = 0.8)
+# train_data <- training(data_split)
+# test_data <- testing(data_split)
+data_split_daily <- initial_split(daily_crimes, prop = 0.8)
+train_data_daily <- training(data_split_daily)
+test_data_daily <- testing(data_split_daily)
 
 # Recipe
-recipe <- recipe(total_crimes ~ zip + year + month, data = train_data) %>%
+# recipe <- recipe(total_crimes ~ zip + year + month, data = train_data) %>%
+#   step_novel(all_nominal(), -all_outcomes()) %>%
+#   step_dummy(all_nominal(), -all_outcomes()) %>%
+#   prep(training = train_data, retain = TRUE)
+recipe_daily <- recipe(total_crimes ~ zip + year + month + day, data = train_data_daily) %>%
   step_novel(all_nominal(), -all_outcomes()) %>%
   step_dummy(all_nominal(), -all_outcomes()) %>%
-  prep(training = train_data, retain = TRUE)
+  prep(training = train_data_daily, retain = TRUE)
 
 # Model specification
 model_spec <- rand_forest(trees = 500) %>%
   set_engine("ranger") %>%
   set_mode("regression")
 
-regression_train_prepped <- bake(recipe, new_data = train_data) 
-regression_test_prepped <- bake(recipe, new_data = test_data)
+regression_train_prepped <- bake(recipe_daily, new_data = train_data_daily) 
+regression_test_prepped <- bake(recipe_daily, new_data = test_data_daily)
 
 # Fit model
 fit <- fit(model_spec, total_crimes ~ ., data = regression_train_prepped)
 
-# Predictions
 predictions <- predict(fit, new_data = regression_test_prepped) %>%
-  bind_cols(test_data) %>%
+  bind_cols(test_data_daily) %>%
   metrics(truth = total_crimes, estimate = .pred)
 
-new_data <- tibble(
-  zip = as.factor(c("85051", "85021", "85022", "85031", "85013")), # Ensure this matches the factor levels used in training
-  year = 2024,
-  month = as.Date("2024-04-01") # The date format should match your training data
+# Zip code predictions
+start_date <- Sys.Date()
+end_date <- start_date %m+% months(1) - days(1)
+date_sequence <- seq.Date(start_date, end_date, by = "day")
+
+# new_data <- tibble(
+#   zip = as.factor(c("85051")),
+# #  zip = as.factor(c("85051", "85021", "85022", "85031", "85013")), # Ensure this matches the factor levels used in training
+#   year = 2024,
+#   month = as.Date("2024-04-01") # The date format should match your training data
+# )
+zip_list <- c("85051")
+
+new_data_daily <- tibble(
+  zip = factor(rep(zip_list, length(date_sequence))), # Adjust as necessary for other zip codes
+  year = year(date_sequence),
+  month = month(date_sequence),
+  day = day(date_sequence)
 )
 
-new_data_with_predictions <- new_data %>%
-  bake(recipe, .) %>%
+daily_predictions <- new_data_daily %>%
+  bake(recipe_daily, new_data = .) %>%
   predict(fit, new_data = .) %>%
-  bind_cols(new_data, prediction = .$`.pred`)
+  mutate(prediction = .$.pred) %>%
+  select(-.pred) %>%
+  bind_cols(new_data_daily) %>% 
+  select(zip, year, month, day, prediction) # reorder
 
-# Filter monthly_crimes for the specified zip codes and combine with predictions
-combined_data <- monthly_crimes %>%
-  filter(zip %in% c("85051", "85021", "85022", "85031", "85013"),
-         year %in% c("2023")) %>% 
-  bind_rows(select(new_data_with_predictions, zip, year, month, prediction))
+pred_forecast <- daily_predictions %>%
+  group_by(zip) %>%
+  summarise(total_crimes = sum(prediction), .groups = 'drop')
 
-combined_data$month <- as.Date(combined_data$month)
+regression_pred <- round(pred_forecast$total_crimes)
 
-# Adding a type column to distinguish between actual counts and predictions
-combined_data <- combined_data %>%
-  mutate(type = ifelse(is.na(prediction), "Actual", "Prediction"))
+daily_crimes <- daily_crimes %>%
+  mutate(type = "actual") %>% 
+  filter(zip==zip_list)
 
-#print(head(combined_data))
+daily_predictions <- daily_predictions %>%
+  mutate(
+    total_crimes = prediction, # Move the predictions to a column named 'total_crimes'
+    type = "predicted"
+  ) %>%
+  select(-prediction) # Optionally remove the 'prediction' column, now redundant
+
+combined_data <- bind_rows(daily_crimes, daily_predictions) %>% 
+  mutate(date = make_date(year, month, day)) %>% 
+  filter(year>="2023")
 
 # Plotting with ggplot2
-ggplot(combined_data, aes(x = month, y = ifelse(is.na(prediction), total_crimes, prediction), group = zip, color = zip)) +
+ggplot(combined_data, aes(x = date, y = total_crimes, group = zip, color = zip)) +
   geom_line(size = 1) +  # Consistent line type across zip codes
   geom_point(aes(shape = type), size = 3) +  # Point shapes change according to type
-  scale_color_manual(values = c("#1b9e77", "#d95f02", "#7570b3", "#e7298a", "#34ccff")) +  # Custom colors for each zip code
+  #scale_color_manual(values = c("#1b9e77", "#d95f02", "#7570b3", "#e7298a", "#34ccff")) +  # Custom colors for each zip code
   scale_shape_manual(values = c(16, 17)) +  # Custom shapes for Actual and Prediction
   labs(title = "Crime Counts and Predictions by Zip Code",
        subtitle = "Actual counts for 2023 and predictions for April 2024",
@@ -262,6 +302,93 @@ ggplot(combined_data, aes(x = month, y = ifelse(is.na(prediction), total_crimes,
        color = "Zip Code", shape = "Type") +
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Synthetic data generation ####
+gen_synthetic_crimes <- function(zip_code_list, predicted_total_crimes_per_zip, historical_data, start_date, end_date) {
+  start_date <- as.Date(start_date)
+  end_date <- as.Date(end_date)
+  date_sequence <- seq.Date(start_date, end_date, by = "day")
+  
+  synthetic_data <- lapply(zip_code_list, function(zip_code) {
+    zip_data <- historical_data %>%
+      filter(zip == zip_code) %>%
+      mutate(hour_minute = sprintf("%02d:%02d", hour(occurred_on), minute(occurred_on))) %>%
+      group_by(hour_minute) %>%
+      summarise(n = n(), .groups = 'drop') %>%
+      mutate(prob = n / sum(n))
+    
+    # Sample 'occurred_on' datetimes based on the hour-minute distribution
+    sampled_hour_minutes <- sample(zip_data$hour_minute, predicted_total_crimes_per_zip, replace = TRUE, prob = zip_data$prob)
+    sampled_dates <- sample(date_sequence, predicted_total_crimes_per_zip, replace = TRUE)
+    
+    synthetic_datetimes <- mapply(function(date, hour_minute) {
+      as.POSIXct(paste(date, hour_minute), format = "%Y-%m-%d %H:%M", tz = "UTC")
+    }, sampled_dates, sampled_hour_minutes)
+    
+    premise_distribution <- historical_data %>%
+      filter(zip == zip_code) %>%
+      count(premise_category) %>%
+      mutate(prob = n / sum(n))
+    
+    synthetic_premises <- sample(premise_distribution$premise_category, predicted_total_crimes_per_zip, replace = TRUE, prob = premise_distribution$prob)
+    
+    data.frame(
+      zip = rep(zip_code, predicted_total_crimes_per_zip),
+      occurred_on = synthetic_datetimes,
+      premise_category = factor(synthetic_premises, levels = c("Residential", "Other Commercial", "Outdoor & Recreational", "Miscellaneous", "Commercial & Retail", "Transport & Utilities", "Public & Institutional"))
+    )
+  }) %>%
+    bind_rows()
+  
+  synthetic_data$occurred_on <- as.POSIXct(synthetic_data$occurred_on, origin = "1970-01-01", tz = "UTC")
+  
+  return(synthetic_data)
+}
+
+synthetic_testdata <- gen_synthetic_crimes(zip_list, regression_pred, app_df, start_date, end_date)
+
+
+#### Classification model ####
+set.seed(123)
+data_split <- initial_split(app_df, prop = 0.80)
+train_data <- training(data_split)
+test_data <- testing(data_split)
+
+class_recipe <- recipe(ucr_crime_category ~ zip + premise_category + occurred_on, data = train_data) %>%
+  step_dummy(all_nominal(), -all_outcomes()) %>%
+  step_date(occurred_on, features = c("month", "dom", "dow", "hour", "minute")) %>%
+  prep(training = train_data, retain = TRUE)
+
+model_spec <- rand_forest(trees = 500) %>%
+  set_engine("ranger") %>%
+  set_mode("classification")
+
+fit <- fit(model_spec, class_recipe, data = train_data)
+
+synthetic_data_processed <- synthetic_testdata %>%
+  bake(class_recipe, new_data = .)
+
+classification_preds <- predict(fit, synthetic_data_processed)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
