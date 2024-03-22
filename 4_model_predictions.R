@@ -214,22 +214,54 @@ model_spec <- rand_forest(trees = 500) %>%
   set_engine("ranger") %>%
   set_mode("regression")
 
-# Workflow
-workflow <- workflow() %>%
-  add_recipe(recipe) %>%
-  add_model(model_spec)
+regression_train_prepped <- bake(recipe, new_data = train_data) 
+regression_test_prepped <- bake(recipe, new_data = test_data)
 
 # Fit model
-fit <- fit(workflow, data = train_data)
+fit <- fit(model_spec, total_crimes ~ ., data = regression_train_prepped)
 
 # Predictions
-predictions <- predict(fit, new_data = test_data) %>%
+predictions <- predict(fit, new_data = regression_test_prepped) %>%
   bind_cols(test_data) %>%
   metrics(truth = total_crimes, estimate = .pred)
 
-predictions
+new_data <- tibble(
+  zip = as.factor(c("85051", "85021", "85022", "85031", "85013")), # Ensure this matches the factor levels used in training
+  year = 2024,
+  month = as.Date("2024-04-01") # The date format should match your training data
+)
 
+new_data_with_predictions <- new_data %>%
+  bake(recipe, .) %>%
+  predict(fit, new_data = .) %>%
+  bind_cols(new_data, prediction = .$`.pred`)
 
+# Filter monthly_crimes for the specified zip codes and combine with predictions
+combined_data <- monthly_crimes %>%
+  filter(zip %in% c("85051", "85021", "85022", "85031", "85013"),
+         year %in% c("2023")) %>% 
+  bind_rows(select(new_data_with_predictions, zip, year, month, prediction))
+
+combined_data$month <- as.Date(combined_data$month)
+
+# Adding a type column to distinguish between actual counts and predictions
+combined_data <- combined_data %>%
+  mutate(type = ifelse(is.na(prediction), "Actual", "Prediction"))
+
+#print(head(combined_data))
+
+# Plotting with ggplot2
+ggplot(combined_data, aes(x = month, y = ifelse(is.na(prediction), total_crimes, prediction), group = zip, color = zip)) +
+  geom_line(size = 1) +  # Consistent line type across zip codes
+  geom_point(aes(shape = type), size = 3) +  # Point shapes change according to type
+  scale_color_manual(values = c("#1b9e77", "#d95f02", "#7570b3", "#e7298a", "#34ccff")) +  # Custom colors for each zip code
+  scale_shape_manual(values = c(16, 17)) +  # Custom shapes for Actual and Prediction
+  labs(title = "Crime Counts and Predictions by Zip Code",
+       subtitle = "Actual counts for 2023 and predictions for April 2024",
+       x = "Month", y = "Counts / Predictions",
+       color = "Zip Code", shape = "Type") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
 
 
