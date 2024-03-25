@@ -15,6 +15,8 @@ library(pheatmap)
 
 
 # FUNCTIONS ####
+# *************************
+# *************************
 gen_synthetic_crimes <- function(zip_code_list, predicted_total_crimes_per_zip, historical_data, start_date, end_date) {
   start_date <- as.Date(start_date)
   end_date <- as.Date(end_date)
@@ -114,6 +116,14 @@ app_df <- app_df %>%
   mutate(premise_category = as.factor(premise_category),
          zip = as.factor(zip),
          ucr_crime_category = as.factor(ucr_crime_category))
+
+# app_df %>%
+#   group_by(ucr_crime_category) %>%
+#   summarise(Count = n()) %>%
+#   mutate(Frequency_Percentage = (Count / sum(Count)) * 100) %>%
+#   select(ucr_crime_category, Frequency_Percentage) %>% 
+#   arrange(desc(Frequency_Percentage))
+
 
 #### REGRESSION MODELING ####
 # *************************
@@ -311,5 +321,125 @@ saveRDS(regr_fit, file = here(models_path, "regr_fit.rds"))
 saveRDS(regr_recipe, file = here(models_path, "regr_recipe.rds"))
 
 
+#### MODELING PRACTICE WITH ARIMA ##########
+# *************************
+# *************************
+#install.packages("fpp3")
+library(tsibble)
+library(fable)
+library(fabletools)
+library(dplyr)
+library(lubridate)
+library(ggplot2)
 
+# Step 1: Aggregate data to weekly totals across all zip codes
+app_df_weekly_total <- app_df %>%
+  mutate(week_start = as.Date(floor_date(occurred_on, unit = "week"))) %>%
+  group_by(week_start) %>%
+  summarise(total_crimes = n(), .groups = "drop") %>% # Correctly count incidents per week
+ # filter(week_start <= "2024-02-11") %>% #filter out an incomplete week
+  as_tsibble(index = week_start)
+
+app_df_weekly_total %>% 
+  autoplot(total_crimes)
+
+# Step 2: Split into training and test sets (e.g., last 4 observations as test set)
+split_point <- round(nrow(app_df_weekly_total) * 0.8)
+train_set <- app_df_weekly_total %>% slice(1:split_point)
+test_set <- app_df_weekly_total %>% slice((split_point + 1):n())
+
+# Step 3: Fit ARIMA and ETS models
+models <- train_set %>%
+  model(
+    #ARIMA = ARIMA(total_crimes),
+    ETS = ETS(total_crimes)
+  )
+
+forecasts <- models %>% forecast(h = nrow(test_set))
+# Calculate accuracy of the forecasts against the test set
+accuracy_forecasts <- accuracy(forecasts, test_set)
+accuracy_forecasts
+
+# autoplot(forecasts) +
+#   autolayer(test_set, total_crimes) +
+#   labs(title = "Forecasts vs Actual Data",
+#        x = "Time", y = "Total Crimes",
+#        caption = "Comparison between forecasted values and actual observations.") +
+#   theme_minimal()
+
+total_fit <- app_df_weekly_total %>% 
+  model(ETS(total_crimes)) %>% 
+  forecast(h = 4)
+
+total_fit %>% 
+  autoplot(app_df_weekly_total %>% 
+             filter(week_start > "2024-01-16"))
+
+total_fit <- as_tibble(total_fit)
+
+
+
+## Weekly counts
+# Step 1: Calculate the weekly counts for each crime category
+weekly_crime_counts <- app_df %>%
+  mutate(week_start = floor_date(occurred_on, unit = "week")) %>%
+  count(week_start, ucr_crime_category) %>%
+  complete(week_start, ucr_crime_category, fill = list(n = 0))
+
+# Step 2: Calculate the total crimes per week
+weekly_total_crimes <- weekly_crime_counts %>%
+  group_by(week_start) %>%
+  summarise(total_crimes = sum(n))
+
+# Step 3: Join the total counts back and calculate fractions
+weekly_crime_fractions <- weekly_crime_counts %>%
+  left_join(weekly_total_crimes, by = "week_start") %>%
+  mutate(fraction = n / total_crimes) %>%
+  select(-total_crimes, -n) %>% 
+  mutate(week_start = as.Date(week_start)) %>% 
+  as_tsibble(index = week_start, key = ucr_crime_category) %>% 
+  fill_gaps() %>%
+  mutate(fraction = replace_na(fraction, 0))
+
+fit <- weekly_crime_fractions %>%
+  model(
+    HL = ETS(fraction ~ error("A") + trend("A") + season("N"))
+  )
+
+crimetypes_forecast <- forecast(fit, h = 4) # Forecasting for 4 periods ahead as an example
+
+forecasts_df <- as_tibble(crimetypes_forecast)
+
+forecasts_df <- forecasts_df %>%
+  group_by(week_start) %>%  # Replace .index with the actual column name representing the forecast period
+  mutate(normalized_fraction = .mean / sum(.mean)) %>%
+  ungroup()
+
+fit %>% 
+  forecast(h = 4) %>% 
+  autoplot(weekly_crime_fractions %>% 
+             filter(week_start > "2023-11-01"))
+
+fit %>% 
+  forecast(h = 4)
+
+total_fit <- total_fit %>% 
+  mutate(total_crimes = round(.mean)) %>% 
+  select(week_start, total_crimes)
+
+## estimate crimes
+crime_estimates <- forecasts_df %>%
+  left_join(total_fit, by = "week_start") %>%
+  mutate(est_crimes = round(normalized_fraction * total_crimes))
+
+ggplot(crime_estimates, aes(x = week_start, y = est_crimes, color = ucr_crime_category)) +
+  geom_line() +  # Use geom_line() if you want to connect points with lines; replace with geom_point() for scatter plot
+  geom_point() + # Adds the data points; remove if only lines are desired
+  labs(title = "Estimated Crime Types Over Forecast Period",
+       x = "Week Starting",
+       y = "Estimated Number of Crimes Rounded",
+       color = "Crime Type") +
+  theme_minimal() +
+  scale_x_date(date_breaks = "1 week", date_labels = "%b %d") + # Adjust date format as needed
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
