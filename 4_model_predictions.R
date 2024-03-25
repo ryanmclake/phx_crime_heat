@@ -340,8 +340,8 @@ app_df_weekly_total <- app_df %>%
  # filter(week_start <= "2024-02-11") %>% #filter out an incomplete week
   as_tsibble(index = week_start)
 
-app_df_weekly_total %>% 
-  autoplot(total_crimes)
+# app_df_weekly_total %>% 
+#   autoplot(total_crimes)
 
 # Step 2: Split into training and test sets (e.g., last 4 observations as test set)
 split_point <- round(nrow(app_df_weekly_total) * 0.8)
@@ -355,9 +355,10 @@ models <- train_set %>%
     ETS = ETS(total_crimes)
   )
 
-forecasts <- models %>% forecast(h = nrow(test_set))
-# Calculate accuracy of the forecasts against the test set
-accuracy_forecasts <- accuracy(forecasts, test_set)
+forecasts <- models %>% 
+  forecast(h = nrow(test_set))
+
+accuracy_forecasts <- fabletools::accuracy(forecasts, test_set)
 accuracy_forecasts
 
 # autoplot(forecasts) +
@@ -369,29 +370,28 @@ accuracy_forecasts
 
 total_fit <- app_df_weekly_total %>% 
   model(ETS(total_crimes)) %>% 
-  forecast(h = 4)
+  forecast(h = 50)
 
 total_fit %>% 
   autoplot(app_df_weekly_total %>% 
              filter(week_start > "2024-01-16"))
 
-total_fit <- as_tibble(total_fit)
-
+total_fit <- as_tibble(total_fit) %>% 
+  mutate(total_crimes = .mean,
+         total_crimes_rounded = round(total_crimes)) %>% 
+  select(week_start, total_crimes)
 
 
 ## Weekly counts
-# Step 1: Calculate the weekly counts for each crime category
 weekly_crime_counts <- app_df %>%
   mutate(week_start = floor_date(occurred_on, unit = "week")) %>%
   count(week_start, ucr_crime_category) %>%
   complete(week_start, ucr_crime_category, fill = list(n = 0))
 
-# Step 2: Calculate the total crimes per week
 weekly_total_crimes <- weekly_crime_counts %>%
   group_by(week_start) %>%
   summarise(total_crimes = sum(n))
 
-# Step 3: Join the total counts back and calculate fractions
 weekly_crime_fractions <- weekly_crime_counts %>%
   left_join(weekly_total_crimes, by = "week_start") %>%
   mutate(fraction = n / total_crimes) %>%
@@ -406,31 +406,30 @@ fit <- weekly_crime_fractions %>%
     HL = ETS(fraction ~ error("A") + trend("A") + season("N"))
   )
 
-crimetypes_forecast <- forecast(fit, h = 4) # Forecasting for 4 periods ahead as an example
+crimetypes_forecast <- forecast(fit, h = 4)
 
 forecasts_df <- as_tibble(crimetypes_forecast)
 
 forecasts_df <- forecasts_df %>%
-  group_by(week_start) %>%  # Replace .index with the actual column name representing the forecast period
+  group_by(week_start) %>%  
   mutate(normalized_fraction = .mean / sum(.mean)) %>%
   ungroup()
 
-fit %>% 
-  forecast(h = 4) %>% 
-  autoplot(weekly_crime_fractions %>% 
+fit %>%
+  forecast(h = 4) %>%
+  autoplot(weekly_crime_fractions %>%
              filter(week_start > "2023-11-01"))
 
-fit %>% 
-  forecast(h = 4)
+# fit %>% 
+#   forecast(h = 4)
 
-total_fit <- total_fit %>% 
-  mutate(total_crimes = round(.mean)) %>% 
-  select(week_start, total_crimes)
+
 
 ## estimate crimes
 crime_estimates <- forecasts_df %>%
   left_join(total_fit, by = "week_start") %>%
-  mutate(est_crimes = round(normalized_fraction * total_crimes))
+  mutate(est_crimes = normalized_fraction * total_crimes,
+         est_crimes_rounded = round(est_crimes))
 
 ggplot(crime_estimates, aes(x = week_start, y = est_crimes, color = ucr_crime_category)) +
   geom_line() +  # Use geom_line() if you want to connect points with lines; replace with geom_point() for scatter plot
