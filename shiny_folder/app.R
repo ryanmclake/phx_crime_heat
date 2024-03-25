@@ -29,6 +29,11 @@ raw_data_path <- here::here("data/crime_data_raw.csv")
 census_geolocated_path <- here::here("data/census_geolocated.csv") # census API data
 df_complete_path <- here::here("data/df_complete_forapp.gpkg")
 blockgroups_geom_path <- here::here("data/blockgroups_geom.gpkg")
+models_path <- here("models/")
+class_fit <- readRDS(file = here(models_path, "class_fit.rds"))
+class_recipe <- readRDS(file = here(models_path, "class_recipe.rds"))
+regression_fit <- readRDS(file = here(models_path, "regression_fit.rds"))
+regression_recipe <- readRDS(file = here(models_path, "regression_recipe.rds"))
 
 raw_df <- readr::read_csv(raw_data_path) %>%
     rename(block_addr_100 = `100_block_addr`) %>% 
