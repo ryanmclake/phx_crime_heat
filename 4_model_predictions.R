@@ -234,13 +234,34 @@ zip_grp_low <- zip_totals %>% filter(cluster == 3)
 
 # And if you want to visualize the groups on the histogram:
 ggplot(zip_totals, aes(x = total_crimes, fill = factor(cluster))) +
-  geom_histogram(binwidth = 500, alpha = 0.6) +
+  geom_histogram(binwidth = 500) +
   labs(title = "Crime Distribution Across Clustered Zip Codes",
        x = "Total Crimes",
        y = "Number of Zip Codes",
        fill = "Cluster") +
   theme_minimal()
 
+total_crimes_by_cluster <- zip_totals %>%
+  group_by(cluster) %>%
+  summarise(
+    total_crimes = sum(total_crimes),
+    num_zip_codes = n() # Count the number of ZIP codes in each cluster
+  ) %>%
+  mutate(proportion = total_crimes / sum(total_crimes)) %>%
+  arrange(desc(cluster))
+
+
+ggplot(total_crimes_by_cluster, aes(x = factor(1), y = proportion, fill = factor(cluster))) +
+  geom_bar(stat = "identity", position = "stack") +
+  coord_flip() +
+  #scale_fill_manual(values = c("red", "green", "blue"), labels = c("High", "Medium", "Low")) +
+  labs(title = "Incident Distribution by Cluster",
+       x = "", # Removing the x-axis label as it's not informative here
+       y = "Proportion of Total Crimes",
+       fill = "Cluster") +
+  theme_minimal() +
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), # Remove x-axis ticks and text
+        legend.title = element_text(size = 12), legend.text = element_text(size = 10))
 
 
 app_df_group_1 <- app_df %>% 
