@@ -39,8 +39,8 @@ geo_df <- read_csv(census_geolocated_path) %>%
 app_df <- raw_df %>%
   left_join(geo_df, by = c("block_addr_100", "zip")) %>%
   select(-state, -occurred_to, -block_addr_100, -grid, -state) %>% 
-  filter(!is.na(lat),!is.na(long)) %>% 
-  slice_sample(n=20000, replace = F)
+  filter(!is.na(lat),!is.na(long))# %>% 
+  #slice_sample(n=20000, replace = F)
 
 app_df <- app_df %>%
   mutate(premise_category = case_when(
@@ -105,9 +105,20 @@ fitted_models <- models %>%
 accuracy_forecasts <- fabletools::accuracy(fitted_models, test_set)
 accuracy_forecasts
 
-models %>% 
-  gg_tsresiduals()
+models %>%
+  components()
 
+ggplot(models %>%
+         components(), aes(x = week_start)) +
+  geom_line(aes(y = trend), colour = "blue") +
+  labs(title = "Trend Component of the Prophet Model",
+       x = "Time", y = "Trend")
+
+ggplot(models %>%
+         components(), aes(x = week_start)) +
+  geom_line(aes(y = season364), colour = "green") +
+  labs(title = "Seasonal Component of the Prophet Model",
+       x = "Time", y = "Yearly Seasonality")
 
 
 
@@ -196,6 +207,8 @@ ggplot(crime_estimates, aes(x = week_start, y = est_crimes, color = ucr_crime_ca
 
 
 # Modeling by zip code and weekly data ####
+# *************************
+# *************************
 zip_totals <- app_df %>%
   group_by(zip) %>%
   summarise(total_crimes = n(), .groups = "drop")
@@ -215,21 +228,31 @@ zip_totals <- zip_totals %>%
   mutate(cluster = k_means_result$cluster)
 
 # Now you can filter your dataframe by the cluster assignment
-zip_group_1 <- zip_totals %>% filter(cluster == 1)
-zip_group_2 <- zip_totals %>% filter(cluster == 2)
-zip_group_3 <- zip_totals %>% filter(cluster == 3)
+zip_grp_high <- zip_totals %>% filter(cluster == 1)
+zip_grp_med <- zip_totals %>% filter(cluster == 2)
+zip_grp_low <- zip_totals %>% filter(cluster == 3)
 
 # And if you want to visualize the groups on the histogram:
 ggplot(zip_totals, aes(x = total_crimes, fill = factor(cluster))) +
   geom_histogram(binwidth = 500, alpha = 0.6) +
-  labs(title = "Distribution of Crimes Across Zip Codes with Clusters",
+  labs(title = "Crime Distribution Across Clustered Zip Codes",
        x = "Total Crimes",
        y = "Number of Zip Codes",
        fill = "Cluster") +
   theme_minimal()
 
+
+
 app_df_group_1 <- app_df %>% 
-  filter(zip %in% zip_group_1$zip)
+  filter(zip %in% zip_grp_high$zip)
+
+
+
+
+
+
+
+
 
 # 2. Aggregate data weekly
 df_weekly_group_1 <- app_df_group_1 %>%
@@ -240,7 +263,10 @@ df_weekly_group_1 <- app_df_group_1 %>%
   fill_gaps() %>%
   mutate(total_crimes = replace_na(total_crimes, 0))
 
-split_point <- round(nrow(df_weekly_group_1) * 0.8)
+df_weekly_group_1 <- df_weekly_group_1 %>%
+  arrange(week_start)
+split_point <- round(nrow(df_weekly_group_1) * 0.9)
+
 
 # Split into training and test sets (based on 80/20 split)
 train_set_group_1 <- df_weekly_group_1 %>% 
@@ -252,20 +278,101 @@ models_group_1 <- train_set_group_1 %>%
   model(prophet_model = fable.prophet::prophet(total_crimes))
 
 # Forecast future crime counts
-fitted_models_group_1 <- models_group_1 %>% 
-  forecast(h = nrow(test_set_group_1))
+forecast_length <- n_distinct(test_set_group_1$week_start)
+
+totalcrimes_forecast_group_1 <- models_group_1 %>% 
+  forecast(h = forecast_length)
 
 # Evaluate the forecast against the test set
-accuracy_forecasts_group_1 <- accuracy(fitted_models_group_1, test_set_group_1)
+accuracy_forecasts_group_1 <- accuracy(totalcrimes_forecast_group_1, test_set_group_1)
 print(accuracy_forecasts_group_1)
 
 # Optionally, visualize the forecast against actual data
-autoplot(fitted_models_group_1) +
+autoplot(totalcrimes_forecast_group_1) +
   autolayer(test_set_group_1, total_crimes) +
   labs(title = "Forecasts vs Actual Data for Zip Group 1",
        x = "Time", y = "Total Crimes",
        caption = "Comparison between forecasted values and actual observations.") +
   theme_minimal()
+
+
+###
+weekly_crime_counts_group_1 <- app_df_group_1 %>%
+  mutate(week_start = floor_date(occurred_on, unit = "week")) %>%
+  filter(week_start <= "2024-02-11") %>%
+  count(zip, week_start, ucr_crime_category) %>%
+  complete(zip, week_start, ucr_crime_category, fill = list(n = 0))
+
+# Calculate total crimes per week for normalization
+weekly_total_crimes_group_1 <- weekly_crime_counts_group_1 %>%
+  group_by(zip, week_start) %>%
+  summarise(total_crimes = sum(n), .groups = "drop")
+
+# Calculate fractions of each crime type per week
+weekly_crime_fractions_group_1 <- weekly_crime_counts_group_1 %>%
+  left_join(weekly_total_crimes_group_1, by = c("zip", "week_start")) %>%
+  mutate(fraction = n / total_crimes) %>%
+  select(-total_crimes, -n) %>%
+  mutate(week_start = as.Date(week_start)) %>%
+  as_tsibble(index = week_start, key = c(zip, ucr_crime_category)) %>%
+  fill_gaps() %>%
+  mutate(fraction = replace_na(fraction, 0))
+
+# Fit ETS models for each crime type's fraction
+fit_group_1 <- weekly_crime_fractions_group_1 %>%
+  model(
+    HL = ETS(fraction ~ error("A") + trend("A") + season("N"))
+  )
+
+# Forecast future crime fractions
+#forecast_length <- n_distinct(test_set_group_1$week_start) # Assuming test_set_group_1 is defined as shown above
+crimetypes_forecast_group_1 <- forecast(fit_group_1, h = forecast_length)
+
+# Convert forecast to a tibble and normalize fractions
+forecasts_df_group_1 <- as_tibble(crimetypes_forecast_group_1) %>%
+  group_by(zip, week_start) %>%
+  mutate(normalized_fraction = .mean / sum(.mean)) %>%
+  ungroup()
+
+# Assuming totalcrimes_forecast_group_1 is a forecast of total crimes for Group 1, similar to totalcrimes_forecast but for Group 1
+crime_estimates_group_1 <- forecasts_df_group_1 %>%
+  left_join(totalcrimes_forecast_group_1, by = c("zip", "week_start")) %>%
+  mutate(est_crimes = normalized_fraction * total_crimes,
+         est_crimes_rounded = round(est_crimes))
+
+# Visualize the estimated crime types over the forecast period
+ggplot(crime_estimates_group_1, aes(x = week_start, y = est_crimes, color = ucr_crime_category)) +
+  geom_line() +  # Use geom_line() if you want to connect points with lines; replace with geom_point() for scatter plot
+  geom_point() + # Adds the data points; remove if only lines are desired
+  labs(title = "Estimated Crime Types Over Forecast Period for Zip Group 1",
+       x = "Week Starting",
+       y = "Estimated Number of Crimes Rounded",
+       color = "Crime Type") +
+  theme_minimal() +
+  scale_x_date(date_breaks = "1 week", date_labels = "%b %d") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 # FUNCTIONS ####
