@@ -17,11 +17,10 @@ library(hrbrthemes)
 library(RColorBrewer)
 # shiny stuff
 library(shiny)
-if(!require(shinyWidgets)) install.packages("shinyWidgets", repos = "http://cran.us.r-project.org")
+library(shinyWidgets)
 library(bslib)
 library(shinycssloaders)
-# predictions
-library(prophet)
+#update.packages(ask = FALSE)
 
 # Load and preprocess the data
 set.seed(2282024)
@@ -29,11 +28,8 @@ raw_data_path <- here::here("data/crime_data_raw.csv")
 census_geolocated_path <- here::here("data/census_geolocated.csv") # census API data
 df_complete_path <- here::here("data/df_complete_forapp.gpkg")
 blockgroups_geom_path <- here::here("data/blockgroups_geom.gpkg")
-models_path <- here("models/")
-class_fit <- readRDS(file = here(models_path, "class_fit.rds"))
-class_recipe <- readRDS(file = here(models_path, "class_recipe.rds"))
-regression_fit <- readRDS(file = here(models_path, "regression_fit.rds"))
-regression_recipe <- readRDS(file = here(models_path, "regression_recipe.rds"))
+
+app_blockgroups_spatial <- sf::st_read(blockgroups_geom_path)
 
 raw_df <- readr::read_csv(raw_data_path) %>%
     rename(block_addr_100 = `100_block_addr`) %>% 
@@ -74,105 +70,6 @@ app_df <- app_df %>%
         str_detect(premise_type, "UNKNOWN|OTHER|ABANDONED|CONDEMNED") ~ "Miscellaneous",
         TRUE ~ "Miscellaneous" # Catch-all for anything not matched
     ))
-
-# app_df %>%
-#     group_by(premise_category) %>%
-#     summarise(count = n()) %>%
-#     ggplot(aes(x = reorder(premise_category, -count), y = count, fill = premise_category)) +
-#     geom_bar(stat = "identity") +
-#     theme_minimal() +
-#     labs(title = "Crime Count by Category", x = "Category", y = "Count") +
-#     coord_flip() # For better label readability
-# 
-# average_counts <- app_df %>%
-#     group_by(ucr_crime_category) %>%
-#     summarise(average_count = mean(count)) %>%
-#     arrange(desc(average_count)) %>%
-#     mutate(ucr_crime_category = factor(ucr_crime_category, levels = ucr_crime_category))
-# 
-# # Merge average counts with original data to order crime categories
-# app_df <- app_df %>%
-#     left_join(average_counts, by = "ucr_crime_category") %>%
-#     mutate(premise_category = factor(premise_category, levels = unique(premise_category)))
-# 
-# # Updated plot
-# app_df %>%
-#     group_by(premise_category, ucr_crime_category) %>%
-#     summarise(count = n(), .groups = 'drop') %>%
-#     ggplot(aes(x = premise_category, y = count, fill = ucr_crime_category)) +
-#     geom_bar(stat = "identity") +
-#     theme_minimal() +
-#     labs(title = "Crime Type Distribution within Each Category", x = "Category", y = "Count") +
-#     facet_wrap(~premise_category, scales = "free_y") +
-#     scale_fill_manual(values = rev(RColorBrewer::brewer.pal(n = length(unique(app_df$ucr_crime_category)), name = "Set3"))) +
-#     theme(axis.text.x = element_text(angle = 45, hjust = 1))
-# 
-# app_df %>%
-#     group_by(premise_category, ucr_crime_category) %>%
-#     summarise(count = n(), .groups = 'drop') %>%
-#     mutate(total_count = sum(count), .by = "premise_category") %>%
-#     mutate(premise_category = factor(premise_category, levels = unique(premise_category[order(-total_count)]))) %>%
-#     mutate(avg_count = ave(count, ucr_crime_category, FUN = mean)) %>%
-#     mutate(ucr_crime_category = factor(ucr_crime_category, levels = unique(ucr_crime_category[order(avg_count)]))) %>%
-#     # Plot
-#     ggplot(aes(x = premise_category, y = count, fill = ucr_crime_category)) +
-#     geom_bar(stat = "identity", position = "stack") +
-#     theme_minimal() +
-#     labs(title = "Crime Type Distribution across Location Categories",
-#          x = "Location Category",
-#          y = "Count",
-#          fill = "Crime Category") +  # Updated legend title
-#     scale_fill_brewer(palette = "Set3") +
-#     theme(axis.text.x = element_text(angle = 45, hjust = 1))
-# 
-# app_df %>%
-#     mutate(year = lubridate::year(occurred_on), month = lubridate::month(occurred_on, label = TRUE)) %>%
-#     group_by(premise_category, year, month) %>%
-#     summarise(count = n()) %>%
-#     ggplot(aes(x = month, y = count, color = premise_category)) +
-#     geom_line() +
-#     facet_wrap(~year, scales = "free_y") +
-#     theme_minimal() +
-#     labs(title = "Monthly Crime Trends by Category", x = "Month", y = "Count")
-# 
-# res_comm_df <- app_df %>%
-#   #  filter(premise_category %in% c("Other Commercial", "Commercial & Retail"))
-#     #filter(premise_category %in% c("Other Commercial"))
-#     filter(premise_category %in% c("Residential"))
-# 
-# 
-# res_comm_df %>%
-#     group_by(premise_category, premise_type) %>%
-#     summarise(count = n()) %>%
-#     ggplot(aes(x = reorder(premise_category, -count), y = count, fill = premise_type)) +
-#     geom_bar(stat = "identity") +
-#     theme_minimal() +
-#     labs(title = "Crime Type Distribution within Each Category", x = "Category", y = "Count") +
-#     facet_wrap(~premise_category, scales = "free_y") # Separate plots for each category
-# 
-# res_comm_df %>%
-#     filter(premise_category == "Residential") %>%
-#     ggplot(aes(x = premise_type, fill = premise_type)) +
-#     geom_bar() +
-#     theme_minimal() +
-#     theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
-#     labs(title = "Distribution of Premise Types", x = "Premise Type", y = "Count")
-
-# temp <- sf::st_read(df_complete_path)
- app_blockgroups_spatial <- sf::st_read(blockgroups_geom_path)
-
-# temp <- temp %>%
-#     mutate(unique_id = row_number(),
-#            ucr_crime_category = stringr::str_to_title(ucr_crime_category))
-# 
-# 
-# app_df <- temp %>% 
-#     slice_sample(n=5000, replace = F) %>% 
-#     st_set_geometry(NULL)
-# 
-# # Extract spatial data
-# app_df_crimes_spatial <- temp %>% 
-#     select(geom, unique_id)  # Ensure unique_id is included
 
 
 #### UI ###########################
@@ -225,7 +122,7 @@ app_sidebar <- list(
 
 ui <- bslib::page_navbar(
         theme = bslib::bs_theme(version = 5, 
-                                primary = "#bf492f", 
+                                primary = "#f9613f", 
                                 font_scale = NULL,
                                 base_font = font_google("Roboto"),
                                 heading_font = font_google("Open Sans"),
@@ -249,8 +146,7 @@ ui <- bslib::page_navbar(
                  navset_card_underline(
                      nav_panel("Temporal Heatmap", shinycssloaders::withSpinner(plotlyOutput("dayOfWeekHeatmap"), 
                                                                                 color = "#bf492f", color.background = "white")),
-                     nav_panel("Type Comparison", shinycssloaders::withSpinner(plotlyOutput("crimeTypeComparison"), 
-                                                                               color = "#bf492f", color.background = "white")),
+                     nav_panel("Type Comparison", plotlyOutput("crimeTypeComparison")),
                      nav_panel("Total Crime", shinycssloaders::withSpinner(plotlyOutput("crimeGraph"), color = "#bf492f", color.background = "white")),
                      nav_panel("Location Comparison", shinycssloaders::withSpinner(plotlyOutput("location_comparison"), color = "#bf492f", color.background = "white"))
                      )
@@ -531,25 +427,46 @@ server <- function(input, output, session) {
         date_breaks <- if(years_spanned <= 2) "1 month" else "6 months"
         date_labels <- "%b %Y"
 
-        p <- ggplot(crime_data, aes(x = date, y = crime_count, fill = ucr_crime_category)) +
-        geom_bar(stat = "identity", position = "stack") +
-        scale_fill_brewer(palette = "Set3") +
-            
-        # scale_fill_viridis(alpha = .8, discrete = TRUE,
-        #                    option = "rocket",
-        #                    end = .6) + # closer to 1 is more yellow
-        theme_minimal() +
-        labs(title = "Comparison by Category",  # Plot title
-             fill = "Category",  # Legend title
-             x = "Date",  # X-axis title
-             y = "Count") +  # Y-axis title
-        scale_x_date(date_breaks = date_breaks, date_labels = date_labels) +
-        theme(axis.title = element_text(size = 14),
-              axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
-              axis.text.y = element_text(size = 12),
-              legend.position = "right",
-              plot.title = element_text(hjust = 0))
-        ggplotly(p)
+        # print(head(crime_data))
+        # print(str(crime_data))
+        
+        heatmap_data <- crime_data %>%
+          mutate(week = floor_date(date, "week")) %>%
+          group_by(week, ucr_crime_category) %>%
+          summarise(crime_count = sum(crime_count), .groups = 'drop') %>%
+          ungroup()
+        
+        # print("heatmap data")
+        # print(head(heatmap_data))
+        # print(str(heatmap_data))
+        
+        # Generating the heatmap
+        p <- plot_ly(data = heatmap_data, x = ~week, y = ~ucr_crime_category, z = ~crime_count, type = 'heatmap', colors = "Reds") %>%
+          layout(yaxis = list(title = 'Crime Category', tickangle = -45, dtick = 1),
+                 xaxis = list(title = 'Date', type = 'date'),
+                 title = 'Crime Rates by Category')
+        
+        p
+        
+        # p <- ggplot(crime_data, aes(x = date, y = crime_count, fill = ucr_crime_category)) +
+        #   geom_bar(stat = "identity")
+        # ggplotly(p)
+        
+        # p <- ggplot(crime_data, aes(x = date, y = crime_count, fill = ucr_crime_category)) +
+        # geom_bar(stat = "identity", position = "stack") +
+        # scale_fill_brewer(palette = "Set3") +
+        # theme_minimal() +
+        # labs(title = "Comparison by Category",  # Plot title
+        #      fill = "Category",  # Legend title
+        #      x = "Date",  # X-axis title
+        #      y = "Count") +  # Y-axis title
+        # scale_x_date(date_breaks = date_breaks, date_labels = date_labels) +
+        # theme(axis.title = element_text(size = 14),
+        #       axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+        #       axis.text.y = element_text(size = 12),
+        #       legend.position = "right",
+        #       plot.title = element_text(hjust = 0))
+        # ggplotly(p)
     })
     
     
