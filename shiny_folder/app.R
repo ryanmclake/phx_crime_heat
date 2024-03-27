@@ -3,6 +3,7 @@ library(here)
 library(readr)
 library(dplyr)
 library(tidyr)
+library(scales)
 library(lubridate)
 library(stringr)
 # mapping
@@ -245,8 +246,8 @@ server <- function(input, output, session) {
                             opacity = .2, # Line opacity
                             fillOpacity = 0.2, # Fill opacity
                             fillColor = "#444444", group = "Phoenix PD Jurisdiction") %>%
-                addHeatmap(data = data, lng = ~long, lat = ~lat, intensity = ~.1,
-                           blur = 15, max = .6, radius = 10, group = "Heatmap") %>%
+                addHeatmap(data = data, lng = ~long, lat = ~lat, intensity = ~.01,
+                           blur = 15, max = .2, radius = 10, group = "Heatmap") %>%
                 addLayersControl(baseGroups = c("Default", "Esri"),
                                  overlayGroups = c("Heatmap", "Phoenix PD Jurisdiction"),
                                  options = layersControlOptions(collapsed = TRUE))
@@ -408,45 +409,61 @@ server <- function(input, output, session) {
     
 # Crime type comparison stacked bar graph
     output$crimeTypeComparison <- renderPlotly({
-        crime_data <- filteredData() %>%
-            group_by(date = as.Date(occurred_on), ucr_crime_category) %>%
-            summarise(crime_count = n(), .groups = 'drop') %>%
-            ungroup() %>%
-            # Calculate average crime counts per category
-            group_by(ucr_crime_category) %>%
-            mutate(avg_crime_count = mean(crime_count)) %>%
-            ungroup() %>%
-            # Reorder ucr_crime_category based on avg_crime_count (to ensure ascending order from bottom)
-            mutate(ucr_crime_category = reorder(ucr_crime_category, avg_crime_count))
+        # crime_data <- filteredData() %>%
+        #     group_by(date = as.Date(occurred_on), ucr_crime_category) %>%
+        #     summarise(crime_count = n(), .groups = 'drop') %>%
+        #     ungroup() %>%
+        #     # Calculate average crime counts per category
+        #     group_by(ucr_crime_category) %>%
+        #     mutate(avg_crime_count = mean(crime_count)) %>%
+        #     ungroup() %>%
+        #     # Reorder ucr_crime_category based on avg_crime_count (to ensure ascending order from bottom)
+        #     mutate(ucr_crime_category = reorder(ucr_crime_category, avg_crime_count))
 
         # Determine the range of dates and calculate the span of years for dynamic x-axis labels
-        date_range <- range(crime_data$date)
-        years_spanned <- as.numeric(difftime(max(date_range), min(date_range), units = "days")) / 365.25
-
-        # Decide date_breaks and date_labels based on the number of years spanned
-        date_breaks <- if(years_spanned <= 2) "1 month" else "6 months"
-        date_labels <- "%b %Y"
+        # date_range <- range(crime_data$date)
+        # years_spanned <- as.numeric(difftime(max(date_range), min(date_range), units = "days")) / 365.25
+        # 
+        # # Decide date_breaks and date_labels based on the number of years spanned
+        # date_breaks <- if(years_spanned <= 2) "1 month" else "6 months"
+        # date_labels <- "%b %Y"
 
         # print(head(crime_data))
         # print(str(crime_data))
-        
-        heatmap_data <- crime_data %>%
-          mutate(week = floor_date(date, "week")) %>%
-          group_by(week, ucr_crime_category) %>%
-          summarise(crime_count = sum(crime_count), .groups = 'drop') %>%
-          ungroup()
         
         # print("heatmap data")
         # print(head(heatmap_data))
         # print(str(heatmap_data))
         
-        # Generating the heatmap
-        p <- plot_ly(data = heatmap_data, x = ~week, y = ~ucr_crime_category, z = ~crime_count, type = 'heatmap', colors = "Reds") %>%
-          layout(yaxis = list(title = 'Crime Category', tickangle = -45, dtick = 1),
-                 xaxis = list(title = 'Date', type = 'date'),
-                 title = 'Crime Rates by Category')
+        crime_data <- filteredData() %>%
+          group_by(ucr_crime_category) %>%
+          summarise(total_crime_count = sum(n()), .groups = 'drop') %>%
+          arrange(desc(total_crime_count)) %>%
+          mutate(ucr_crime_category = factor(ucr_crime_category, levels = ucr_crime_category))
         
-        p
+        # Creating the horizontal bar chart
+        p <- ggplot(crime_data, aes(x = total_crime_count, y = reorder(ucr_crime_category, -total_crime_count), fill = ucr_crime_category)) +
+          geom_bar(stat = "identity") +
+          scale_fill_brewer(palette = "Set3") +
+          scale_x_continuous(labels = scales::comma) +
+          labs(title = "",
+               x = "Count", 
+               y = "") +
+          theme_minimal() +
+          theme(legend.position = "none",
+                axis.text.y = element_text(angle = 30, hjust = 1))
+        
+        
+        ggplotly(p)
+        
+        # Create the horizontal bar chart
+        # ggplot(crime_summary, aes(x = reorder(ucr_crime_category, -crime_count), y = crime_count, fill = ucr_crime_category)) +
+        #   geom_bar(stat = "identity") +
+        #   coord_flip() +  # Make the bar chart horizontal
+        #   scale_fill_brewer(palette = "Set3") +  # Color the bars
+        #   labs(x = "Crime Type", y = "Count", title = "Counts of Each Crime Type") +
+        #   theme_minimal() +
+        #   theme(legend.position = "none")  # Hide the legend if not needed
         
         # p <- ggplot(crime_data, aes(x = date, y = crime_count, fill = ucr_crime_category)) +
         #   geom_bar(stat = "identity")
