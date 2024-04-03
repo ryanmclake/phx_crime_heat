@@ -9,7 +9,7 @@ path = paste0(getwd(),"/bldg_energy_dataprep_ongoing.R")
 cmd = cron_rscript(path)
 # add the command and specify the days/times to start
 cron_add(command = cmd, frequency = 'daily', at="4:51PM", days_of_week = c(1:7),
-         id = 'daily_newdata', description = 'Energy Insights app - generating daily new data')
+         id = 'daily_newdata', description = 'Phx raw data - generating daily new data')
 
 # remove it by 'id' if needed
 cron_rm(id = "daily_newdata")
