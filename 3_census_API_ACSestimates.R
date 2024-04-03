@@ -8,6 +8,9 @@ library(sf)
 library(here)
 library(dplyr)
 library(viridis)
+
+# Script for downloading census ACS data for the blockgroups of interest in Phoenix
+
 start_time <- Sys.time()  # Capture start time
 
 api_key_file <- "/Users/natebender/Desktop/repo/census_2024_api_key.txt"
