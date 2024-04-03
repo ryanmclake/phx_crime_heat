@@ -1,5 +1,3 @@
-#### Experimenting with Census geocoding API rather than Nominatim #######################################
-# **********************************************************************************
 library(dplyr)
 library(readr)
 library(stringr)
@@ -8,6 +6,8 @@ library(Hmisc)
 library(lubridate)
 library(here)
 library(httr) # census api
+
+# Script for geolocating lat/long coordinates to the Phoenix Police crime data.
 
 start_time <- Sys.time()  # Capture start time
 
