@@ -3,9 +3,28 @@ library(dplyr)
 library(stringr)
 library(here)
 library(lubridate)
+library(googledrive)
+
+#drive_deauth()
+#drive_auth(scope = "https://www.googleapis.com/auth/drive")
 
 # Step 1: Find the most recent date in the existing dataset
 existing_data_path <- here::here("data/crime_data_raw.csv")
+raw_data <- drive_upload(media = existing_data_path,
+             name = "crime_data_raw.csv",
+             path = as_id("1vlRyyJjao4mbf2MIHSLI81girSDGB4bm"))
+
+# should see "shared=TRUE"
+raw_data %>% 
+  drive_reveal("permissions")
+
+# Use the file ID directly to specify the file
+file_id <- "1ZjEEKvB0CMBVvHOVh7gwXRQLcpPXo4r5"  # Replace with the actual file ID from the upload step
+temp_file_path <- tempfile(fileext = ".csv")
+drive_download(as_id(file_id), path = temp_file_path, overwrite = TRUE)
+existing_data <- read_csv(temp_file_path)
+
+
 existing_data <- readr::read_csv(existing_data_path) %>%
   #rename_with(~ str_to_lower(.) %>% stringr::str_replace_all(" ", "_")) %>%
   mutate(#`100_block_addr` = str_replace_all(`100_block_addr`, "XX", "00"),
