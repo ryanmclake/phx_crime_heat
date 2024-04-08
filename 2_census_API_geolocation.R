@@ -1,3 +1,4 @@
+library(googledrive)
 library(dplyr)
 library(readr)
 library(stringr)
@@ -12,16 +13,33 @@ library(httr) # census api
 start_time <- Sys.time()  # Capture start time
 
 # Paths
-raw_data_path <- here::here("data/crime_data_raw.csv")
+# raw_data_path <- here::here("data/crime_data_raw.csv")
 census_forgeolocation_path <- here::here("data/census_forgeolocation.csv")
 census_temp_path <- here::here("data/census_temp.csv")
 census_geolocated_path <- here::here("data/census_geolocated.csv")
 
+# Find correct file ID on google drive
+raw_data_path <- drive_find(pattern = "crime_data_raw.csv")
+file_id <- raw_data_path$id  # Replace with the actual file ID from the upload step
+temp_file_path <- tempfile(fileext = ".csv")
+drive_download(as_id(file_id), path = temp_file_path, overwrite = TRUE)
+
 # Read raw data
-raw_df <- read_csv(raw_data_path) %>%
+df_raw <- read_csv(temp_file_path) %>%
   rename_with(~ str_to_lower(.) %>% str_replace_all(" ", "_")) %>%
-  mutate(zip = as.character(zip)) %>% 
-  filter(!is.na(occurred_on))
+  mutate(zip = as.character(zip),
+         ucr_crime_category = as.factor(ucr_crime_category)) %>% 
+  filter(!is.na(occurred_on)) %>% 
+  select(-grid)
+
+# raw_df <- read_csv(raw_data_path) %>%
+#   rename_with(~ str_to_lower(.) %>% str_replace_all(" ", "_")) %>%
+#   mutate(zip = as.character(zip)) %>% 
+#   filter(!is.na(occurred_on))
+
+#
+# START HERE
+#
 
 # Read geolocated data
 if (file.exists(census_geolocated_path)) {
@@ -29,19 +47,12 @@ if (file.exists(census_geolocated_path)) {
     mutate(zip = as.character(zip))
 } else {
   # Initialize colnames and structure from raw data
-  geo_df <- read_csv(raw_data_path) %>%
-    rename_with(~ str_to_lower(.) %>% str_replace_all(" ", "_")) %>%
-    mutate(`100_block_addr` = str_replace_all(`100_block_addr`, "XX", "00"),
-           zip = as.character(zip),
-           state = "Arizona",
-           occurred_on = lubridate::mdy_hm(occurred_on, truncated = 3),
-           occurred_to = lubridate::mdy_hm(occurred_to, truncated = 3)) %>%
-    filter(!is.na(occurred_on)) %>%
+  geo_df <- df_raw %>% 
     slice(0)  # Select zero rows to keep just the column structure
   write_csv(geo_df, census_geolocated_path)
 }
 
-# Prepare the data frame as before
+# Grab just the unique combos of addr and zip
 raw_df <- raw_df %>%
   distinct(`100_block_addr`, `zip`, .keep_all = T) # .keep_all keeps all cols in place
 
@@ -80,10 +91,7 @@ form_data <- list(
 response <- httr::POST(url = api_url, body = form_data, encode = "multipart")
 
 if (response$status_code == 200) {
-  # Extract the content as text
-
-  # Save the content to a file
-  writeLines(
+    writeLines(
     httr::content(response, "text"), 
     census_temp_path)
   cat("Geocoding results saved to 'census_temp_path'.\n")
@@ -175,7 +183,7 @@ if (length(api_response) <= 3) {
     group_by(long, lat) %>%
     # Ensure all addresses within each lat/long pair are the same 
     # by replacing them with the first address encountered in each pair
-    # There are occasional discrepancies in the addresses e.g. "St" v "Ave"
+    # There are occasional discrepancies in the addresses e.g. "87 Example St" v "87 Example Ave"
     mutate(`100_block_addr` = first(`100_block_addr`))
   
   # bind "matches" and "no_matches_ties" dataframes together after processing
