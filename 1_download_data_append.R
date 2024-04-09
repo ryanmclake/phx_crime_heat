@@ -8,19 +8,21 @@ library(googledrive)
 #drive_deauth()
 #drive_auth(scope = "https://www.googleapis.com/auth/drive")
 
+# Ignore these two steps with the initial raw data if you don't need to upload anything to GDrive initially
+# raw_data <- drive_upload(media = existing_data_path,
+#              name = "crime_data_raw.csv",
+#              path = as_id("1vlRyyJjao4mbf2MIHSLI81girSDGB4bm"))
+## should see "shared=TRUE"
+# raw_data %>% 
+#    drive_reveal("permissions")
+
 # Step 1: Find the most recent date in the existing dataset
 existing_data_path <- here::here("data/crime_data_raw.csv")
 
-# Ignore these two steps with the initial raw data if you don't need to upload anything to GDrive initially
-raw_data <- drive_upload(media = existing_data_path,
-             name = "crime_data_raw.csv",
-             path = as_id("1vlRyyJjao4mbf2MIHSLI81girSDGB4bm"))
-# # should see "shared=TRUE"
-raw_data %>% 
-   drive_reveal("permissions")
-
 # Download data from Google Drive
-file_id <- raw_data$id  # Replace with the actual file ID from the upload step
+# this usually takes a min or two
+raw_data_path <- drive_find(pattern = "crime_data_raw.csv")
+file_id <- raw_data_path$id  # Replace with the actual file ID from the upload step
 temp_file_path <- tempfile(fileext = ".csv")
 drive_download(as_id(file_id), path = temp_file_path, overwrite = TRUE)
 

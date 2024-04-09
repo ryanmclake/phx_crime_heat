@@ -10,53 +10,67 @@ library(httr) # census api
 
 # Script for geolocating lat/long coordinates to the Phoenix Police crime data.
 
+# Ignore these two steps with the initial raw data if you don't need to upload any geolocated data to GDrive initially
+# census_geolocated_path <- here::here("data/census_geolocated.csv")
+# raw_data_geolocated <- drive_upload(media = census_geolocated_path,
+#              name = "census_geolocated.csv",
+#              path = as_id("1vlRyyJjao4mbf2MIHSLI81girSDGB4bm")) # folder id 
+# # should see "shared=TRUE"
+# raw_data_geolocated %>%
+#    drive_reveal("permissions")
+
 start_time <- Sys.time()  # Capture start time
 
 # Paths
-# raw_data_path <- here::here("data/crime_data_raw.csv")
 census_forgeolocation_path <- here::here("data/census_forgeolocation.csv")
 census_temp_path <- here::here("data/census_temp.csv")
-census_geolocated_path <- here::here("data/census_geolocated.csv")
 
-# Find correct file ID on google drive
+# Read existing geolocated data
+geolocated_path <- drive_find(pattern = "census_geolocated.csv")
+file_id <- geolocated_path$id  # this takes a min or two
+temp_file_path <- tempfile(fileext = ".csv")
+drive_download(as_id(file_id), path = temp_file_path, overwrite = TRUE)
+df_geolocated <- read_csv(temp_file_path) %>%
+  rename_with(~ str_to_lower(.) %>% str_replace_all(" ", "_")) %>%
+  mutate(zip = as.character(zip),
+         lat = as.double(lat),
+         long = as.double(long)
+         )
+
+# Download existing raw data from Google Drive
+# this usually takes a min or two
 raw_data_path <- drive_find(pattern = "crime_data_raw.csv")
 file_id <- raw_data_path$id  # Replace with the actual file ID from the upload step
 temp_file_path <- tempfile(fileext = ".csv")
 drive_download(as_id(file_id), path = temp_file_path, overwrite = TRUE)
 
-# Read raw data
 df_raw <- read_csv(temp_file_path) %>%
-  rename_with(~ str_to_lower(.) %>% str_replace_all(" ", "_")) %>%
-  mutate(zip = as.character(zip),
-         ucr_crime_category = as.factor(ucr_crime_category)) %>% 
-  filter(!is.na(occurred_on)) %>% 
-  select(-grid)
+  mutate(zip = as.character(zip)) %>%
+  filter(!is.na(occurred_on))
 
 # raw_df <- read_csv(raw_data_path) %>%
 #   rename_with(~ str_to_lower(.) %>% str_replace_all(" ", "_")) %>%
 #   mutate(zip = as.character(zip)) %>% 
 #   filter(!is.na(occurred_on))
 
-#
-# START HERE
-#
 
-# Read geolocated data
-if (file.exists(census_geolocated_path)) {
-  geo_df <- read_csv(census_geolocated_path) %>% 
-    mutate(zip = as.character(zip))
-} else {
-  # Initialize colnames and structure from raw data
-  geo_df <- df_raw %>% 
-    slice(0)  # Select zero rows to keep just the column structure
-  write_csv(geo_df, census_geolocated_path)
-}
+
+# old - Read geolocated data
+# if (file.exists(census_geolocated_path)) {
+#   geo_df <- read_csv(census_geolocated_path) %>% 
+#     mutate(zip = as.character(zip))
+# } else {
+#   # Initialize colnames and structure from raw data
+#   geo_df <- df_raw %>% 
+#     slice(0)  # Select zero rows to keep just the column structure
+#   write_csv(geo_df, census_geolocated_path)
+# }
 
 # Grab just the unique combos of addr and zip
-raw_df <- raw_df %>%
+df_raw <- df_raw %>%
   distinct(`100_block_addr`, `zip`, .keep_all = T) # .keep_all keeps all cols in place
 
-temp_records_to_process <- anti_join(raw_df, geo_df, by = c("100_block_addr", "zip"))
+temp_records_to_process <- anti_join(df_raw, df_geolocated, by = c("100_block_addr", "zip"))
 
 records_to_process <- head(temp_records_to_process, 9000)
 
@@ -149,8 +163,13 @@ if (length(api_response) <= 3) {
     slice(1) %>%
     ungroup()
   
-  write_csv(api_response_df, census_geolocated_path, col_names = T, append = T)
+  #write_csv(api_response_df, census_geolocated_path, col_names = T, append = T)
 
+  df_geolocated_upd <- df_geolocated %>%
+    bind_rows(api_response_df)
+  write_csv(df_geolocated_upd, temp_file_path, col_names = TRUE)
+  drive_update(as_id(file_id), media = temp_file_path)
+  
 } else {
   col_names <- c("unique_ID", "input_address", "match_status", "match_type", "output_address", "coordinates", "tiger_id", "side")
   api_response <- read_csv(census_temp_path, col_names = col_names)
@@ -196,7 +215,13 @@ if (length(api_response) <= 3) {
   api_response_df <- api_response_df %>% 
     rename(block_addr_100 = `100_block_addr`)
   
-  write_csv(api_response_df, census_geolocated_path, col_names = T, append = T)
+#  write_csv(api_response_df, census_geolocated_path, col_names = T, append = T)
+  
+  df_geolocated_upd <- df_geolocated %>%
+    bind_rows(api_response_df)
+  write_csv(df_geolocated_upd, temp_file_path, col_names = TRUE)
+  drive_update(as_id(file_id), media = temp_file_path)
+  
 }
 
 # delete temp files created during the api process
@@ -211,7 +236,7 @@ seconds <- duration_sec %% 60
 formatted_duration <- sprintf("%02d:%02d:%02d", hours, minutes, round(seconds))
 
 cat("Records processed on this run:", scales::comma(nrow(api_response_df)), "\n")
-cat("Records processed in total:", scales::comma(nrow(geo_df)+nrow(api_response_df)), "\n")
-cat("Records remaining:", scales::comma(nrow(temp_records_to_process)), "\n")
+cat("Records processed in total:", scales::comma(nrow(df_geolocated)+nrow(api_response_df)), "\n")
+cat("Records remaining:", scales::comma(nrow(temp_records_to_process)-nrow(api_response_df)), "\n")
 cat("Time elapsed:", formatted_duration, "h/m/s\n")
 
